@@ -2,17 +2,18 @@ package com.sparrowwallet.sparrow.io;
 
 import com.sparrowwallet.drongo.*;
 import com.sparrowwallet.drongo.crypto.*;
+import com.sparrowwallet.drongo.policy.PolicyType;
 import com.sparrowwallet.drongo.wallet.Keystore;
 import com.sparrowwallet.drongo.wallet.MnemonicException;
 import com.sparrowwallet.drongo.wallet.StandardAccount;
 import com.sparrowwallet.drongo.wallet.Wallet;
 import com.sparrowwallet.sparrow.AppServices;
+import com.sparrowwallet.sparrow.net.ServerType;
 import com.sparrowwallet.sparrow.SparrowWallet;
 import javafx.concurrent.ScheduledService;
 import javafx.concurrent.Service;
 import javafx.concurrent.Task;
 import org.apache.commons.lang3.concurrent.BasicThreadFactory;
-import org.controlsfx.tools.Platform;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -182,18 +183,20 @@ public class Storage {
                 Keystore keystore = wallet.getKeystores().get(i);
                 if(keystore.hasSeed()) {
                     Keystore copyKeystore = copy.getKeystores().get(i);
-                    Keystore derivedKeystore = Keystore.fromSeed(copyKeystore.getSeed(), copyKeystore.getKeyDerivation().getDerivation());
+                    Keystore derivedKeystore = Keystore.fromSeed(copyKeystore.getSeed(), wallet.getPolicyType(), copyKeystore.getKeyDerivation().getDerivation());
                     keystore.setKeyDerivation(derivedKeystore.getKeyDerivation());
                     keystore.setExtendedPublicKey(derivedKeystore.getExtendedPublicKey());
                     keystore.getSeed().setPassphrase(copyKeystore.getSeed().getPassphrase());
                     keystore.setBip47ExtendedPrivateKey(derivedKeystore.getBip47ExtendedPrivateKey());
+                    keystore.setSilentPaymentScanAddress(derivedKeystore.getSilentPaymentScanAddress());
                     copyKeystore.getSeed().clear();
                 } else if(keystore.hasMasterPrivateExtendedKey()) {
                     Keystore copyKeystore = copy.getKeystores().get(i);
-                    Keystore derivedKeystore = Keystore.fromMasterPrivateExtendedKey(copyKeystore.getMasterPrivateExtendedKey(), copyKeystore.getKeyDerivation().getDerivation());
+                    Keystore derivedKeystore = Keystore.fromMasterPrivateExtendedKey(copyKeystore.getMasterPrivateExtendedKey(), wallet.getPolicyType(), copyKeystore.getKeyDerivation().getDerivation());
                     keystore.setKeyDerivation(derivedKeystore.getKeyDerivation());
                     keystore.setExtendedPublicKey(derivedKeystore.getExtendedPublicKey());
                     keystore.setBip47ExtendedPrivateKey(derivedKeystore.getBip47ExtendedPrivateKey());
+                    keystore.setSilentPaymentScanAddress(derivedKeystore.getSilentPaymentScanAddress());
                     copyKeystore.getMasterPrivateKey().clear();
                 }
             }
@@ -486,7 +489,16 @@ public class Storage {
     }
 
     public static File getWalletsDir() {
-        File walletsDir = new File(getSparrowDir(), WALLETS_DIR);
+        File walletsDir = Config.get().getWalletsDir();
+        if(walletsDir != null) {
+            if(!walletsDir.exists() && (walletsDir.getParentFile() == null || !walletsDir.getParentFile().exists() || !walletsDir.getParentFile().canWrite())) {
+                log.info("Configured wallets directory " + walletsDir.getAbsolutePath() + " is not reachable, reverting to default");
+                walletsDir = null;
+            }
+        }
+        if(walletsDir == null) {
+            walletsDir = new File(getSparrowDir(), WALLETS_DIR);
+        }
         if(!walletsDir.exists()) {
             createOwnerOnlyDirectory(walletsDir);
         }
@@ -495,8 +507,23 @@ public class Storage {
     }
 
     public static File getCertificateFile(String host) {
-        File certsDir = getCertsDir();
-        File[] certs = certsDir.listFiles((dir, name) -> name.equals(host));
+        return findCertFile(getCertName(host));
+    }
+
+    public static void saveCertificate(String host, Certificate cert) {
+        writeCertPem(getCertName(host), cert);
+    }
+
+    public static File getCaCertificateFile(String host) {
+        return findCertFile(host + ".cacert");
+    }
+
+    public static void saveCaCertificate(String host, Certificate cert) {
+        writeCertPem(host + ".cacert", cert);
+    }
+
+    private static File findCertFile(String filename) {
+        File[] certs = getCertsDir().listFiles((dir, name) -> name.equals(filename));
         if(certs != null && certs.length > 0) {
             return certs[0];
         }
@@ -504,8 +531,8 @@ public class Storage {
         return null;
     }
 
-    public static void saveCertificate(String host, Certificate cert) {
-        try(FileWriter writer = new FileWriter(new File(getCertsDir(), host))) {
+    private static void writeCertPem(String filename, Certificate cert) {
+        try(FileWriter writer = new FileWriter(new File(getCertsDir(), filename))) {
             writer.write("-----BEGIN CERTIFICATE-----\n");
             writer.write(Base64.getEncoder().encodeToString(cert.getEncoded()).replaceAll("(.{64})", "$1\n"));
             writer.write("\n-----END CERTIFICATE-----\n");
@@ -514,6 +541,14 @@ public class Storage {
         } catch(IOException e) {
             log.error("Error writing PEM certificate", e);
         }
+    }
+
+    private static String getCertName(String host) {
+        if(Config.get().getServerType() == ServerType.BITCOIN_CORE) {
+            return host + ".bitcoind";
+        }
+
+        return host;
     }
 
     static File getCertsDir() {
@@ -646,7 +681,7 @@ public class Storage {
     }
 
     private static boolean isWindows() {
-        return Platform.getCurrent() == Platform.WINDOWS;
+        return OsType.getCurrent() == OsType.WINDOWS;
     }
 
     public static class LoadWalletService extends Service<WalletAndKey> {
@@ -685,7 +720,7 @@ public class Storage {
 
         public static Executor getSingleThreadedExecutor() {
             if(singleThreadedExecutor == null) {
-                BasicThreadFactory factory = new BasicThreadFactory.Builder().namingPattern("LoadWalletService-single").daemon(true).priority(Thread.MIN_PRIORITY).build();
+                BasicThreadFactory factory = BasicThreadFactory.builder().namingPattern("LoadWalletService-single").daemon(true).priority(Thread.MIN_PRIORITY).build();
                 singleThreadedExecutor = Executors.newSingleThreadScheduledExecutor(factory);
             }
 

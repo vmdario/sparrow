@@ -3,6 +3,7 @@ package com.sparrowwallet.sparrow.wallet;
 import com.csvreader.CsvWriter;
 import com.google.common.eventbus.Subscribe;
 import com.sparrowwallet.drongo.BitcoinUnit;
+import com.sparrowwallet.drongo.OsType;
 import com.sparrowwallet.drongo.wallet.*;
 import com.sparrowwallet.sparrow.UnitFormat;
 import com.sparrowwallet.sparrow.AppServices;
@@ -89,7 +90,7 @@ public class UtxosController extends WalletFormController implements Initializab
 
         clear.setDisable(true);
         sendSelected.setDisable(true);
-        sendSelected.setTooltip(new Tooltip("Send selected UTXOs. Use " + (org.controlsfx.tools.Platform.getCurrent() == org.controlsfx.tools.Platform.OSX ? "Cmd" : "Ctrl") + "+click to select multiple." ));
+        sendSelected.setTooltip(new Tooltip("Send selected UTXOs. Use " + (OsType.getCurrent() == OsType.MACOS ? "Cmd" : "Ctrl") + "+click to select multiple." ));
 
         utxosTable.getSelectionModel().getSelectedIndices().addListener((ListChangeListener<Integer>) c -> {
             List<Entry> selectedEntries = utxosTable.getSelectionModel().getSelectedCells().stream().filter(tp -> tp.getTreeItem() != null).map(tp -> tp.getTreeItem().getValue()).collect(Collectors.toList());
@@ -120,18 +121,22 @@ public class UtxosController extends WalletFormController implements Initializab
 
         long selectedTotal = selectedEntries.stream().mapToLong(Entry::getValue).sum();
         if(selectedTotal > 0) {
-            if(format == null) {
-                format = UnitFormat.DOT;
-            }
-
-            if(unit == null || unit.equals(BitcoinUnit.AUTO)) {
-                unit = (selectedTotal >= BitcoinUnit.getAutoThreshold() ? BitcoinUnit.BTC : BitcoinUnit.SATOSHIS);
-            }
-
-            if(unit.equals(BitcoinUnit.BTC)) {
-                sendSelected.setText("Send Selected (" + format.formatBtcValue(selectedTotal) + " BTC)");
+            if(Config.get().isHideAmounts()) {
+                sendSelected.setText("Send Selected");
             } else {
-                sendSelected.setText("Send Selected (" + format.formatSatsValue(selectedTotal) + " sats)");
+                if(format == null) {
+                    format = UnitFormat.DOT;
+                }
+
+                if(unit == null || unit.equals(BitcoinUnit.AUTO)) {
+                    unit = (selectedTotal >= BitcoinUnit.getAutoThreshold() ? BitcoinUnit.BTC : BitcoinUnit.SATOSHIS);
+                }
+
+                if(unit.equals(BitcoinUnit.BTC)) {
+                    sendSelected.setText("Send Selected (" + format.formatBtcValue(selectedTotal) + " BTC)");
+                } else {
+                    sendSelected.setText("Send Selected (" + format.formatSatsValue(selectedTotal) + " sats)");
+                }
             }
         } else {
             sendSelected.setText("Send Selected");
@@ -267,6 +272,19 @@ public class UtxosController extends WalletFormController implements Initializab
         updateButtons(event.getUnitFormat(), event.getBitcoinUnit());
         fiatBalance.refresh(event.getUnitFormat());
         fiatMempoolBalance.refresh(event.getUnitFormat());
+    }
+
+    @Subscribe
+    public void hideAmountsStatusChanged(HideAmountsStatusEvent event) {
+        utxosTable.refresh();
+        utxosChart.update(getWalletForm().getWalletUtxosEntry());
+        utxosChart.refreshAxisLabels();
+        utxosChart.refreshTooltips();
+        balance.refresh();
+        mempoolBalance.refresh();
+        fiatBalance.refresh();
+        fiatMempoolBalance.refresh();
+        updateButtons(Config.get().getUnitFormat(), Config.get().getBitcoinUnit());
     }
 
     @Subscribe

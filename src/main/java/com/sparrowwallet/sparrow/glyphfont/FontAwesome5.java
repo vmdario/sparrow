@@ -16,6 +16,7 @@ public class FontAwesome5 extends GlyphFont {
      */
     public static enum Glyph implements INamedCharacter {
         ADJUST('\uf042'),
+        ANCHOR('\uf13d'),
         ARROW_CIRCLE_DOWN('\uf0ab'),
         ANGLE_DOUBLE_RIGHT('\uf101'),
         ARROW_DOWN('\uf063'),
@@ -40,6 +41,7 @@ public class FontAwesome5 extends GlyphFont {
         FEATHER_ALT('\uf56b'),
         FILE_CSV('\uf6dd'),
         FILE_IMPORT('\uf56f'),
+        FILE_EXPORT('\uf56e'),
         FILE_PDF('\uf1c1'),
         HAND_HOLDING('\uf4bd'),
         HAND_HOLDING_MEDICAL('\ue05c'),

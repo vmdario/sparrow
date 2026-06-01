@@ -6,6 +6,7 @@ import com.sparrowwallet.drongo.KeyPurpose;
 import com.sparrowwallet.drongo.Utils;
 import com.sparrowwallet.drongo.address.Address;
 import com.sparrowwallet.drongo.address.InvalidAddressException;
+import com.sparrowwallet.drongo.wallet.TableType;
 import com.sparrowwallet.drongo.wallet.Wallet;
 import com.sparrowwallet.sparrow.AppServices;
 import com.sparrowwallet.sparrow.UnitFormat;
@@ -59,14 +60,7 @@ public class SearchWalletDialog extends Dialog<Entry> {
         dialogPane.getStylesheets().add(AppServices.class.getResource("search.css").toExternalForm());
         AppServices.setStageIcon(dialogPane.getScene().getWindow());
         dialogPane.setHeaderText(showWallet ? "Search All Wallets" : "Search Wallet " + walletForms.get(0).getMasterWallet().getName());
-
-        Image image = new Image("image/sparrow-small.png", 50, 50, false, false);
-        if(!image.isError()) {
-            ImageView imageView = new ImageView();
-            imageView.setSmooth(false);
-            imageView.setImage(image);
-            dialogPane.setGraphic(imageView);
-        }
+        dialogPane.setGraphic(new DialogImage(DialogImage.Type.SPARROW));
 
         VBox vBox = new VBox();
         vBox.setSpacing(20);
@@ -80,16 +74,17 @@ public class SearchWalletDialog extends Dialog<Entry> {
         searchField.setText("Search:");
         search = TextFields.createClearableTextField();
         search.setPromptText("Label, address, value or transaction ID");
+        search.setSkin(new AddressTextFieldSkin(search));
         searchField.getInputs().add(search);
 
         fieldset.getChildren().addAll(searchField);
         form.getChildren().add(fieldset);
 
         results = new CoinTreeTable();
+        results.setTableType(TableType.SEARCH_WALLET);
         results.setShowRoot(false);
         results.setPrefWidth(showWallet || showAccount ? 950 : 850);
         results.setUnitFormat(walletForms.iterator().next().getWallet());
-        results.setColumnResizePolicy(TreeTableView.CONSTRAINED_RESIZE_POLICY);
         results.setPlaceholder(new Label("No results"));
         results.setEditable(true);
 
@@ -119,7 +114,11 @@ public class SearchWalletDialog extends Dialog<Entry> {
         entryCol.setCellValueFactory((TreeTableColumn.CellDataFeatures<Entry, Entry> param) -> {
             return new ReadOnlyObjectWrapper<>(param.getValue().getValue());
         });
-        entryCol.setCellFactory(p -> new SearchEntryCell());
+        entryCol.setCellFactory(p -> {
+            SearchEntryCell searchEntryCell = new SearchEntryCell();
+            searchEntryCell.setSkin(new AddressTreeTableCellSkin<>(searchEntryCell));
+            return searchEntryCell;
+        });
         String address = walletForms.iterator().next().getNodeEntry(KeyPurpose.RECEIVE).getAddress().toString();
         entryCol.setMinWidth(TextUtils.computeTextWidth(AppServices.getMonospaceFont(), address, 0.0));
         results.getColumns().add(entryCol);
@@ -169,7 +168,12 @@ public class SearchWalletDialog extends Dialog<Entry> {
             searchWallets(newValue);
         });
 
+        SearchWalletEntry rootEntry = new SearchWalletEntry(walletForms.getFirst().getWallet(), Collections.emptyList());
+        RecursiveTreeItem<Entry> rootItem = new RecursiveTreeItem<>(rootEntry, Entry::getChildren);
+        results.setRoot(rootItem);
+
         setResizable(true);
+        results.setupColumnWidths();
 
         AppServices.moveToActiveWindowScreen(this);
 

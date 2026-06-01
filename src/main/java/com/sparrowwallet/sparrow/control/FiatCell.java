@@ -1,8 +1,10 @@
 package com.sparrowwallet.sparrow.control;
 
+import com.sparrowwallet.drongo.OsType;
 import com.sparrowwallet.drongo.protocol.Transaction;
 import com.sparrowwallet.sparrow.CurrencyRate;
 import com.sparrowwallet.sparrow.UnitFormat;
+import com.sparrowwallet.sparrow.io.Config;
 import com.sparrowwallet.sparrow.wallet.Entry;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.MenuItem;
@@ -10,7 +12,6 @@ import javafx.scene.control.Tooltip;
 import javafx.scene.control.TreeTableCell;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
-import org.controlsfx.tools.Platform;
 
 import java.math.BigDecimal;
 import java.util.Currency;
@@ -24,7 +25,7 @@ public class FiatCell extends TreeTableCell<Entry, Number> {
         tooltip = new Tooltip();
         contextMenu = new FiatContextMenu();
         getStyleClass().add("coin-cell");
-        if(Platform.getCurrent() == Platform.OSX) {
+        if(OsType.getCurrent() == OsType.MACOS) {
             getStyleClass().add("number-field");
         }
     }
@@ -47,20 +48,27 @@ public class FiatCell extends TreeTableCell<Entry, Number> {
             CurrencyRate currencyRate = coinTreeTable.getCurrencyRate();
 
             if(currencyRate != null && currencyRate.isAvailable()) {
-                Currency currency = currencyRate.getCurrency();
-                double btcRate = currencyRate.getBtcRate();
+                if(Config.get().isHideAmounts()) {
+                    setText(CoinLabel.HIDDEN_AMOUNT_TEXT);
+                    setGraphic(null);
+                    setTooltip(null);
+                    setContextMenu(null);
+                } else {
+                    Currency currency = currencyRate.getCurrency();
+                    double btcRate = currencyRate.getBtcRate();
 
-                BigDecimal satsBalance = BigDecimal.valueOf(amount.longValue());
-                BigDecimal btcBalance = satsBalance.divide(BigDecimal.valueOf(Transaction.SATOSHIS_PER_BITCOIN));
-                BigDecimal fiatBalance = btcBalance.multiply(BigDecimal.valueOf(btcRate));
+                    BigDecimal satsBalance = BigDecimal.valueOf(amount.longValue());
+                    BigDecimal btcBalance = satsBalance.divide(BigDecimal.valueOf(Transaction.SATOSHIS_PER_BITCOIN));
+                    BigDecimal fiatBalance = btcBalance.multiply(BigDecimal.valueOf(btcRate));
 
-                String label = format.formatCurrencyValue(fiatBalance.doubleValue());
-                tooltip.setText("1 BTC = " + currency.getSymbol() + " " + format.formatCurrencyValue(btcRate));
+                    String label = format.formatCurrencyValue(fiatBalance.doubleValue());
+                    tooltip.setText("1 BTC = " + currency.getSymbol() + " " + format.formatCurrencyValue(btcRate));
 
-                setText(label);
-                setGraphic(null);
-                setTooltip(tooltip);
-                setContextMenu(contextMenu);
+                    setText(label);
+                    setGraphic(null);
+                    setTooltip(tooltip);
+                    setContextMenu(contextMenu);
+                }
             } else {
                 setText(null);
                 setGraphic(null);

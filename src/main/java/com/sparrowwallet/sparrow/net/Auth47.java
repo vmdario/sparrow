@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.sparrowwallet.drongo.ExtendedKey;
 import com.sparrowwallet.drongo.KeyPurpose;
+import com.sparrowwallet.drongo.Utils;
 import com.sparrowwallet.drongo.crypto.ChildNumber;
 import com.sparrowwallet.drongo.crypto.ECKey;
 import com.sparrowwallet.drongo.protocol.ScriptType;
@@ -36,7 +37,7 @@ public class Auth47 {
     private String srbnName;
     private String resource;
 
-    public Auth47(URI uri) throws MalformedURLException {
+    public Auth47(URI uri) throws MalformedURLException, URISyntaxException {
         this.nonce = uri.getHost();
 
         Map<String, String> parameterMap = new LinkedHashMap<>();
@@ -64,24 +65,22 @@ public class Auth47 {
         }
         if(strCallback.startsWith(SRBN_PROTOCOL)) {
             String srbnCallback = HTTPS_PROTOCOL + strCallback.substring(SRBN_PROTOCOL.length());
-            URL srbnUrl = new URL(srbnCallback);
+            URL srbnUrl = new URI(srbnCallback).toURL();
             this.srbn = true;
             this.srbnName = srbnUrl.getUserInfo();
-            this.callback = new URL(HTTPS_PROTOCOL + srbnUrl.getHost());
+            this.callback = new URI(HTTPS_PROTOCOL + srbnUrl.getHost()).toURL();
         } else {
-            this.callback = new URL(strCallback);
+            URI callbackUri = new URI(strCallback);
+            if(!Utils.isSecureUrl(callbackUri)) {
+                throw new IllegalArgumentException("Invalid callback parameter (not https, http .onion or srbn): " + strCallback);
+            }
+            this.callback = callbackUri.toURL();
         }
 
         this.expiry = parameterMap.get("e");
         this.resource = parameterMap.get("r");
         if(resource == null) {
-            if(srbn) {
-                this.resource = "srbn";
-            } else if(strCallback.startsWith("http")) {
-                this.resource = strCallback;
-            } else {
-                throw new IllegalArgumentException("Invalid callback parameter (not http/s or srbn): " + strCallback);
-            }
+            this.resource = srbn ? "srbn" : strCallback;
         }
     }
 

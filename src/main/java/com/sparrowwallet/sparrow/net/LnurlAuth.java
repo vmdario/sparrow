@@ -38,12 +38,20 @@ public class LnurlAuth {
     private final byte[] k1;
     private final String action;
 
-    public LnurlAuth(URI uri) throws MalformedURLException {
+    public LnurlAuth(URI uri) throws MalformedURLException, URISyntaxException {
         String lnurl = uri.getSchemeSpecificPart();
         Bech32.Bech32Data bech32 = Bech32.decode(lnurl, 2000);
+        if(!"lnurl".equals(bech32.hrp)) {
+            throw new IllegalArgumentException("LNURL-auth bech32 prefix must be lnurl");
+        }
+
         byte[] urlBytes = Bech32.convertBits(bech32.data, 0, bech32.data.length, 5, 8, false);
         String strUrl = new String(urlBytes, StandardCharsets.UTF_8);
-        this.url = new URL(strUrl);
+        URI decodedUri = new URI(strUrl);
+        if(!Utils.isSecureUrl(decodedUri)) {
+            throw new IllegalArgumentException("LNURL-auth URL must be https or http .onion");
+        }
+        this.url = decodedUri.toURL();
 
         Map<String, String> parameterMap = new LinkedHashMap<>();
         String query = url.getQuery();
@@ -144,15 +152,15 @@ public class LnurlAuth {
         try {
             ECKey linkingKey = deriveLinkingKey(wallet);
             byte[] signature = getSignature(linkingKey);
-            return new URL(url.toString() + "&sig=" + Utils.bytesToHex(signature) + "&key=" + Utils.bytesToHex(linkingKey.getPubKey()));
-        } catch(MalformedURLException e) {
+            return new URI(url.toString() + "&sig=" + Utils.bytesToHex(signature) + "&key=" + Utils.bytesToHex(linkingKey.getPubKey())).toURL();
+        } catch(MalformedURLException | URISyntaxException e) {
             throw new IllegalStateException("Malformed return URL", e);
         }
     }
 
     private ECKey deriveLinkingKey(Wallet wallet) {
-        if(wallet.getPolicyType() != PolicyType.SINGLE) {
-            throw new IllegalArgumentException("Only singlesig wallets can authenticate.");
+        if(wallet.getPolicyType() != PolicyType.SINGLE_HD) {
+            throw new IllegalArgumentException("Only singlesig HD wallets can authenticate.");
         }
 
         if(wallet.isEncrypted()) {

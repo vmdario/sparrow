@@ -1,5 +1,6 @@
 package com.sparrowwallet.sparrow.control;
 
+import com.sparrowwallet.drongo.OsType;
 import com.sparrowwallet.drongo.Utils;
 import com.sparrowwallet.drongo.wallet.Bip39MnemonicCode;
 import com.sparrowwallet.sparrow.AppServices;
@@ -49,8 +50,7 @@ public class MnemonicGridDialog extends Dialog<List<String>> {
         dialogPane.getStylesheets().add(AppServices.class.getResource("general.css").toExternalForm());
         dialogPane.getStylesheets().add(AppServices.class.getResource("grid.css").toExternalForm());
         dialogPane.setHeaderText("Load a Border Wallets PDF, or generate a grid from a BIP39 seed.\nThen select 11 or 23 words in a pattern on the grid.\nThe order of selection is important!");
-        javafx.scene.image.Image image = new Image("/image/border-wallets.png");
-        dialogPane.setGraphic(new ImageView(image));
+        dialogPane.setGraphic(new DialogImage(DialogImage.Type.BORDERWALLETS));
 
         String[][] emptyWordGrid = new String[128][GRID_COLUMN_COUNT];
         Grid grid = getGrid(emptyWordGrid);
@@ -256,7 +256,7 @@ public class MnemonicGridDialog extends Dialog<List<String>> {
                     FileChooser fileChooser = new FileChooser();
                     fileChooser.setTitle("Open PDF");
                     fileChooser.getExtensionFilters().addAll(
-                            new FileChooser.ExtensionFilter("All Files", org.controlsfx.tools.Platform.getCurrent().equals(org.controlsfx.tools.Platform.UNIX) ? "*" : "*.*"),
+                            new FileChooser.ExtensionFilter("All Files", OsType.getCurrent().equals(OsType.UNIX) ? "*" : "*.*"),
                             new FileChooser.ExtensionFilter("PDF", "*.pdf")
                     );
 

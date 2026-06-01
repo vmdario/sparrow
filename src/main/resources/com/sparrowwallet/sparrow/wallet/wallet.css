@@ -31,7 +31,17 @@
 
 .address-cell, .utxo-row.entry-cell {
     -fx-font-size: 13px;
-    -fx-font-family: 'Roboto Mono';
+    -fx-font-family: 'Fragment Mono Regular';
+}
+
+.cell > .hyperlink {
+    -fx-font-family: none;
+    -fx-font-size: none;
+}
+
+.cell > .tooltip {
+    -fx-font-family: none;
+    -fx-font-size: 0.85em;
 }
 
 .hashindex-row {
@@ -139,7 +149,7 @@
 
 .address-text-field {
     -fx-font-size: 13px;
-    -fx-font-family: 'Roboto Mono';
+    -fx-font-family: 'Fragment Mono Regular';
 }
 
 .unconfirmed-row {

@@ -1,10 +1,10 @@
 package com.sparrowwallet.sparrow.control;
 
+import com.sparrowwallet.drongo.wallet.TableType;
 import com.sparrowwallet.sparrow.wallet.*;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.scene.control.SelectionMode;
 import javafx.scene.control.TreeTableColumn;
-import javafx.scene.control.TreeTableView;
 
 import java.util.Comparator;
 
@@ -57,7 +57,11 @@ public class UtxosTreeTable extends CoinTreeTable {
             addressCol.setCellValueFactory((TreeTableColumn.CellDataFeatures<Entry, UtxoEntry.AddressStatus> param) -> {
                 return ((UtxoEntry)param.getValue().getValue()).addressStatusProperty();
             });
-            addressCol.setCellFactory(p -> new AddressCell());
+            addressCol.setCellFactory(p -> {
+                AddressCell addressCell = new AddressCell();
+                addressCell.setSkin(new AddressTreeTableCellSkin<>(addressCell));
+                return addressCell;
+            });
             addressCol.setSortable(true);
             addressCol.setComparator(Comparator.comparing(o -> o.getAddress().toString()));
             getColumns().add(addressCol);
@@ -82,8 +86,8 @@ public class UtxosTreeTable extends CoinTreeTable {
 
         setPlaceholder(getDefaultPlaceholder(rootEntry.getWallet()));
         setEditable(true);
-        setColumnResizePolicy(TreeTableView.CONSTRAINED_RESIZE_POLICY);
-        setSortColumn(getColumns().size() - 1, TreeTableColumn.SortType.DESCENDING);
+        setupColumnWidths();
+        setupColumnSort(getColumns().size() - 1, TreeTableColumn.SortType.DESCENDING);
 
         getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
     }
@@ -95,14 +99,14 @@ public class UtxosTreeTable extends CoinTreeTable {
         setRoot(rootItem);
         rootItem.setExpanded(true);
 
-        setSortColumn(getColumns().size() - 1, TreeTableColumn.SortType.DESCENDING);
+        resetSortColumn();
     }
 
     public void updateHistory() {
         //Utxo entries should have already been updated, so only a resort required
         if(!getRoot().getChildren().isEmpty()) {
             sort();
-            setSortColumn(getColumns().size() - 1, TreeTableColumn.SortType.DESCENDING);
+            resetSortColumn();
         }
     }
 

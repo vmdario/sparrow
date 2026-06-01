@@ -1,5 +1,7 @@
 package com.sparrowwallet.sparrow.io;
 
+import com.sparrowwallet.drongo.policy.PolicyType;
+import com.sparrowwallet.drongo.protocol.ScriptType;
 import com.sparrowwallet.drongo.wallet.Keystore;
 import com.sparrowwallet.drongo.wallet.Wallet;
 import com.sparrowwallet.drongo.wallet.WalletModel;
@@ -62,9 +64,28 @@ public class JadeMultisig extends ColdcardMultisig {
         Wallet wallet = super.importWallet(inputStream, password);
         for(Keystore keystore : wallet.getKeystores()) {
             keystore.setLabel(keystore.getLabel().replace("Coldcard", "Jade"));
-            keystore.setWalletModel(WalletModel.JADE);
         }
 
         return wallet;
+    }
+
+    @Override
+    public Keystore getKeystore(PolicyType policyType, ScriptType scriptType, InputStream inputStream, String password) throws ImportException {
+        throw new ImportException("Failed to detect a valid " + scriptType.getDescription() + " keystore.");
+    }
+
+    @Override
+    public String getKeystoreImportDescription(int account) {
+        return "Import QR created on your Jade by selecting Options > Wallet > Export Xpub once you have loaded your seed. Make sure to select Multisig as the Wallet type in the Options menu there.";
+    }
+
+    @Override
+    public boolean isKeystoreImportScannable() {
+        return true;
+    }
+
+    @Override
+    public boolean isFileFormatAvailable() {
+        return false;
     }
 }

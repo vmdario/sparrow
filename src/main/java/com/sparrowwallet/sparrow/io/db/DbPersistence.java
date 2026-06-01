@@ -1,6 +1,7 @@
 package com.sparrowwallet.sparrow.io.db;
 
 import com.google.common.eventbus.Subscribe;
+import com.sparrowwallet.drongo.IOUtils;
 import com.sparrowwallet.drongo.Utils;
 import com.sparrowwallet.drongo.crypto.Argon2KeyDeriver;
 import com.sparrowwallet.drongo.crypto.AsymmetricKeyDeriver;
@@ -35,6 +36,7 @@ import java.nio.file.StandardCopyOption;
 import java.security.SecureRandom;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
+import java.util.regex.Pattern;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -53,6 +55,7 @@ public class DbPersistence implements Persistence {
     private static final String H2_USER = "sa";
     private static final String H2_PASSWORD = "";
     public static final String MIGRATION_RESOURCES_DIR = "com/sparrowwallet/sparrow/sql/";
+    private static final Pattern JDBC_URL_INJECTION_PATTERN = Pattern.compile(";\\w+=");
 
     private HikariDataSource dataSource;
     private AsymmetricKeyDeriver keyDeriver;
@@ -80,6 +83,7 @@ public class DbPersistence implements Persistence {
         ECKey encryptionKey = getEncryptionKey(password, storage.getWalletFile(), alreadyDerivedKey);
 
         migrate(storage, MASTER_SCHEMA, encryptionKey);
+        validateSchema(storage, MASTER_SCHEMA, encryptionKey);
 
         Jdbi jdbi = getJdbi(storage, getFilePassword(encryptionKey));
         masterWallet = jdbi.withHandle(handle -> {
@@ -109,6 +113,7 @@ public class DbPersistence implements Persistence {
         Map<WalletAndKey, Storage> childWallets = new TreeMap<>();
         for(String schema : childSchemas) {
             migrate(storage, schema, encryptionKey);
+            validateSchema(storage, schema, encryptionKey);
 
             Jdbi childJdbi = getJdbi(storage, getFilePassword(encryptionKey));
             Wallet wallet = childJdbi.withHandle(handle -> {
@@ -157,11 +162,20 @@ public class DbPersistence implements Persistence {
 
     @Override
     public void updateWallet(Storage storage, Wallet wallet, ECKey encryptionPubKey) throws StorageException {
-        updatePassword(storage, encryptionPubKey);
+        String newPassword = getFilePassword(encryptionPubKey);
+        String currentPassword = getDatasourcePassword();
 
         updateExecutor.execute(() -> {
             try {
-                update(storage, wallet, getFilePassword(encryptionPubKey));
+                if(dataSource != null && currentPassword != null && newPassword == null) {
+                    //Removing encryption: write data first
+                    update(storage, wallet, currentPassword);
+                    updatePassword(storage, encryptionPubKey);
+                } else {
+                    //Adding encryption or no change: change file first
+                    updatePassword(storage, encryptionPubKey);
+                    update(storage, wallet, newPassword);
+                }
             } catch(Exception e) {
                 log.error("Error updating wallet db", e);
             }
@@ -170,7 +184,7 @@ public class DbPersistence implements Persistence {
 
     private synchronized void createUpdateExecutor(Wallet masterWallet) {
         if(updateExecutor == null) {
-            BasicThreadFactory factory = new BasicThreadFactory.Builder().namingPattern(masterWallet.getFullName() + "-dbupdater").daemon(true).priority(Thread.NORM_PRIORITY).build();
+            BasicThreadFactory factory = BasicThreadFactory.builder().namingPattern(masterWallet.getFullName() + "-dbupdater").daemon(true).priority(Thread.NORM_PRIORITY).build();
             updateExecutor = Executors.newSingleThreadExecutor(factory);
         }
     }
@@ -212,7 +226,7 @@ public class DbPersistence implements Persistence {
             WalletDao walletDao = handle.attach(WalletDao.class);
             try {
                 if(dirtyPersistables.deleteAccount && !wallet.isMasterWallet()) {
-                    handle.execute("drop schema `" + getSchema(wallet) + "` cascade");
+                    handle.execute("drop schema `" + getSchema(wallet).replace("`", "``") + "` cascade");
                     return;
                 }
 
@@ -235,11 +249,11 @@ public class DbPersistence implements Persistence {
                         if(addressNode.getId() == null) {
                             WalletNode purposeNode = wallet.getNode(addressNode.getKeyPurpose());
                             if(purposeNode.getId() == null) {
-                                long purposeNodeId = walletNodeDao.insertWalletNode(purposeNode.getDerivationPath(), purposeNode.getLabel(), wallet.getId(), null, null);
+                                long purposeNodeId = walletNodeDao.insertWalletNode(purposeNode.getDerivationPath(), purposeNode.getLabel(), wallet.getId(), null, null, null);
                                 purposeNode.setId(purposeNodeId);
                             }
 
-                            long nodeId = walletNodeDao.insertWalletNode(addressNode.getDerivationPath(), addressNode.getLabel(), wallet.getId(), purposeNode.getId(), addressNode.getAddressData());
+                            long nodeId = walletNodeDao.insertWalletNode(addressNode.getDerivationPath(), addressNode.getLabel(), wallet.getId(), purposeNode.getId(), addressNode.getAddressData(), addressNode.getSilentPaymentTweak());
                             addressNode.setId(nodeId);
                         } else if(addressNode.getAddress() != null) {
                             walletNodeDao.updateNodeAddressData(addressNode.getId(), addressNode.getAddressData());
@@ -268,7 +282,7 @@ public class DbPersistence implements Persistence {
                 }
 
                 if(dirtyPersistables.label != null) {
-                    walletDao.updateLabel(wallet.getId(), dirtyPersistables.label.length() > 255 ? dirtyPersistables.label.substring(0, 255) : dirtyPersistables.label);
+                    walletDao.updateLabel(wallet.getId(), dirtyPersistables.label.length() > Wallet.MAX_LABEL_LENGTH ? dirtyPersistables.label.substring(0, Wallet.MAX_LABEL_LENGTH) : dirtyPersistables.label);
                 }
 
                 if(dirtyPersistables.blockHeight != null) {
@@ -294,11 +308,11 @@ public class DbPersistence implements Persistence {
                             if(addressNode.getId() == null) {
                                 WalletNode purposeNode = wallet.getNode(addressNode.getKeyPurpose());
                                 if(purposeNode.getId() == null) {
-                                    long purposeNodeId = walletNodeDao.insertWalletNode(purposeNode.getDerivationPath(), purposeNode.getLabel(), wallet.getId(), null, null);
+                                    long purposeNodeId = walletNodeDao.insertWalletNode(purposeNode.getDerivationPath(), purposeNode.getLabel(), wallet.getId(), null, null, null);
                                     purposeNode.setId(purposeNodeId);
                                 }
 
-                                long nodeId = walletNodeDao.insertWalletNode(addressNode.getDerivationPath(), addressNode.getLabel(), wallet.getId(), purposeNode.getId(), addressNode.getAddressData());
+                                long nodeId = walletNodeDao.insertWalletNode(addressNode.getDerivationPath(), addressNode.getLabel(), wallet.getId(), purposeNode.getId(), addressNode.getAddressData(), addressNode.getSilentPaymentTweak());
                                 addressNode.setId(nodeId);
                             } else if(addressNode.getAddress() != null) {
                                 walletNodeDao.updateNodeAddressData(addressNode.getId(), addressNode.getAddressData());
@@ -321,6 +335,16 @@ public class DbPersistence implements Persistence {
                 if(dirtyPersistables.walletConfig) {
                     WalletConfigDao walletConfigDao = handle.attach(WalletConfigDao.class);
                     walletConfigDao.addOrUpdate(wallet, wallet.getWalletConfig());
+                }
+
+                if(dirtyPersistables.silentPaymentAddresses) {
+                    SilentPaymentAddressDao silentPaymentAddressDao = handle.attach(SilentPaymentAddressDao.class);
+                    silentPaymentAddressDao.clearAndAddAll(wallet);
+                }
+
+                if(dirtyPersistables.walletTable != null) {
+                    WalletTableDao walletTableDao = handle.attach(WalletTableDao.class);
+                    walletTableDao.addOrUpdate(wallet, dirtyPersistables.walletTable.getTableType(), dirtyPersistables.walletTable);
                 }
 
                 if(dirtyPersistables.mixConfig) {
@@ -352,6 +376,13 @@ public class DbPersistence implements Persistence {
                     KeystoreDao keystoreDao = handle.attach(KeystoreDao.class);
                     for(Keystore keystore : dirtyPersistables.encryptionKeystores) {
                         keystoreDao.updateKeystoreEncryption(keystore);
+                    }
+                }
+
+                if(!dirtyPersistables.registrationKeystores.isEmpty()) {
+                    KeystoreDao keystoreDao = handle.attach(KeystoreDao.class);
+                    for(Keystore keystore : dirtyPersistables.registrationKeystores) {
+                        keystoreDao.updateDeviceRegistration(keystore.getDeviceRegistration(), keystore.getId());
                     }
                 }
 
@@ -391,6 +422,52 @@ public class DbPersistence implements Persistence {
             throw new StorageException("Failed to open wallet file.\n" + e.getMessage(), e);
         } finally {
             IOUtils.deleteDirectory(migrationDir);
+        }
+    }
+
+    private void validateSchema(Storage storage, String schema, ECKey encryptionKey) throws StorageException {
+        Jdbi jdbi = getJdbi(storage, getFilePassword(encryptionKey));
+        try {
+            jdbi.useHandle(handle -> {
+                List<String> routines = handle.createQuery("SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_SCHEMA <> 'INFORMATION_SCHEMA'").mapTo(String.class).list();
+                if(!routines.isEmpty()) {
+                    throw new RuntimeException(new StorageException("Wallet file contains unexpected database routines: " + String.join(", ", routines) + "."));
+                }
+
+                List<String> triggers = handle.createQuery("SELECT TRIGGER_NAME FROM INFORMATION_SCHEMA.TRIGGERS WHERE TRIGGER_SCHEMA <> 'INFORMATION_SCHEMA'").mapTo(String.class).list();
+                if(!triggers.isEmpty()) {
+                    throw new RuntimeException(new StorageException("Wallet file contains unexpected database triggers: " + String.join(", ", triggers) + "."));
+                }
+
+                List<String> checkConstraints = handle.createQuery("SELECT CHECK_CLAUSE FROM INFORMATION_SCHEMA.CHECK_CONSTRAINTS WHERE UPPER(CONSTRAINT_SCHEMA) = UPPER(:schema)")
+                        .bind("schema", schema).mapTo(String.class).list();
+                if(!checkConstraints.isEmpty()) {
+                    throw new RuntimeException(new StorageException("Wallet file contains unexpected check constraints: " + String.join(", ", checkConstraints) + "."));
+                }
+
+                List<Map<String, Object>> nonBaseTables = handle.createQuery("SELECT TABLE_NAME, TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES WHERE UPPER(TABLE_SCHEMA) = UPPER(:schema) "
+                        + "AND TABLE_TYPE <> 'BASE TABLE' AND UPPER(TABLE_NAME) <> 'FLYWAY_SCHEMA_HISTORY'").bind("schema", schema).mapToMap().list();
+                if(!nonBaseTables.isEmpty()) {
+                    String detail = nonBaseTables.stream().map(m -> m.get("TABLE_NAME") + " (" + m.get("TABLE_TYPE") + ")").collect(Collectors.joining(", "));
+                    throw new RuntimeException(new StorageException("Wallet file contains unexpected database object types: " + detail + "."));
+                }
+
+                List<String> generatedColumns = handle.createQuery("SELECT TABLE_NAME || '.' || COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE UPPER(TABLE_SCHEMA) = UPPER(:schema) AND GENERATION_EXPRESSION IS NOT NULL")
+                        .bind("schema", schema).mapTo(String.class).list();
+                if(!generatedColumns.isEmpty()) {
+                    throw new RuntimeException(new StorageException("Wallet file contains unexpected generated columns: " + String.join(", ", generatedColumns) + "."));
+                }
+
+                List<String> domains = handle.createQuery("SELECT DOMAIN_NAME FROM INFORMATION_SCHEMA.DOMAINS WHERE DOMAIN_SCHEMA <> 'INFORMATION_SCHEMA'").mapTo(String.class).list();
+                if(!domains.isEmpty()) {
+                    throw new RuntimeException(new StorageException("Wallet file contains unexpected database domains: " + String.join(", ", domains) + "."));
+                }
+            });
+        } catch(RuntimeException e) {
+            if(e.getCause() instanceof StorageException) {
+                throw new StorageException("This is not a valid wallet file.\n\n" + e.getCause().getMessage());
+            }
+            throw e;
         }
     }
 
@@ -624,7 +701,7 @@ public class DbPersistence implements Persistence {
     }
 
     private Flyway getFlyway(Storage storage, String schema, String password, File resourcesDir) throws StorageException {
-        return Flyway.configure().dataSource(getDataSource(storage, password)).locations("filesystem:" + resourcesDir.getAbsolutePath()).schemas(schema).failOnMissingLocations(true).load();
+        return Flyway.configure().cleanDisabled(false).dataSource(getDataSource(storage, password)).locations("filesystem:" + resourcesDir.getAbsolutePath()).schemas(schema).failOnMissingLocations(true).load();
     }
 
     //Flyway does not support JPMS yet, so the migration files are extracted to a temp dir in order to avoid classloader encapsulation issues
@@ -682,7 +759,10 @@ public class DbPersistence implements Persistence {
         }
     }
 
-    private String getUrl(File walletFile, String password) {
+    private String getUrl(File walletFile, String password) throws StorageException {
+        if(JDBC_URL_INJECTION_PATTERN.matcher(walletFile.getAbsolutePath()).find()) {
+            throw new StorageException("Wallet file path contains invalid characters");
+        }
         return "jdbc:h2:" + walletFile.getAbsolutePath().replace("." + getType().getExtension(), "") + ";INIT=SET TRACE_LEVEL_FILE=4;TRACE_LEVEL_FILE=4;DEFRAG_ALWAYS=true;MAX_COMPACT_TIME=5000;DATABASE_TO_UPPER=false" + (password == null ? "" : ";CIPHER=AES");
     }
 
@@ -762,6 +842,13 @@ public class DbPersistence implements Persistence {
     }
 
     @Subscribe
+    public void walletTableChanged(WalletTableChangedEvent event) {
+        if(persistsFor(event.getWallet()) && event.getTableType() != null && event.getWallet().getWalletTable(event.getTableType()) != null) {
+            updateExecutor.execute(() -> dirtyPersistablesMap.computeIfAbsent(event.getWallet(), key -> new DirtyPersistables()).walletTable = event.getWalletTable());
+        }
+    }
+
+    @Subscribe
     public void walletMixConfigChanged(WalletMixConfigChangedEvent event) {
         if(persistsFor(event.getWallet()) && event.getWallet().getMixConfig() != null) {
             updateExecutor.execute(() -> dirtyPersistablesMap.computeIfAbsent(event.getWallet(), key -> new DirtyPersistables()).mixConfig = true);
@@ -793,9 +880,23 @@ public class DbPersistence implements Persistence {
     }
 
     @Subscribe
+    public void keystoreDeviceRegistrationsChanged(KeystoreDeviceRegistrationsChangedEvent event) {
+        if(persistsFor(event.getWallet())) {
+            updateExecutor.execute(() -> dirtyPersistablesMap.computeIfAbsent(event.getWallet(), key -> new DirtyPersistables()).registrationKeystores.addAll(event.getChangedKeystores()));
+        }
+    }
+
+    @Subscribe
     public void walletWatchLastChanged(WalletWatchLastChangedEvent event) {
         if(persistsFor(event.getWallet())) {
             updateExecutor.execute(() -> dirtyPersistablesMap.computeIfAbsent(event.getWallet(), key -> new DirtyPersistables()).watchLast = event.getWatchLast());
+        }
+    }
+
+    @Subscribe
+    public void walletSilentPaymentAddressesChanged(WalletSilentPaymentAddressesChangedEvent event) {
+        if(persistsFor(event.getWallet())) {
+            updateExecutor.execute(() -> dirtyPersistablesMap.computeIfAbsent(event.getWallet(), key -> new DirtyPersistables()).silentPaymentAddresses = true);
         }
     }
 
@@ -810,11 +911,14 @@ public class DbPersistence implements Persistence {
         public final List<Entry> labelEntries = new ArrayList<>();
         public final List<BlockTransactionHashIndex> utxoStatuses = new ArrayList<>();
         public boolean walletConfig;
+        public WalletTable walletTable = null;
         public boolean mixConfig;
         public final Map<Sha256Hash, UtxoMixData> changedUtxoMixes = new HashMap<>();
         public final Map<Sha256Hash, UtxoMixData> removedUtxoMixes = new HashMap<>();
         public final List<Keystore> labelKeystores = new ArrayList<>();
         public final List<Keystore> encryptionKeystores = new ArrayList<>();
+        public final List<Keystore> registrationKeystores = new ArrayList<>();
+        public boolean silentPaymentAddresses;
 
         public String toString() {
             return "Dirty Persistables" +
@@ -830,11 +934,14 @@ public class DbPersistence implements Persistence {
                     "\nUTXO labels:" + labelEntries.stream().filter(entry -> entry instanceof HashIndexEntry).map(entry -> ((HashIndexEntry)entry).getHashIndex().toString()).collect(Collectors.toList()) +
                     "\nUTXO statuses:" + utxoStatuses +
                     "\nWallet config:" + walletConfig +
+                    "\nWallet table:" + walletTable +
                     "\nMix config:" + mixConfig +
                     "\nUTXO mixes changed:" + changedUtxoMixes +
                     "\nUTXO mixes removed:" + removedUtxoMixes +
                     "\nKeystore labels:" + labelKeystores.stream().map(Keystore::getLabel).collect(Collectors.toList()) +
-                    "\nKeystore encryptions:" + encryptionKeystores.stream().map(Keystore::getLabel).collect(Collectors.toList());
+                    "\nKeystore encryptions:" + encryptionKeystores.stream().map(Keystore::getLabel).collect(Collectors.toList()) +
+                    "\nKeystore registrations:" + registrationKeystores.stream().map(Keystore::getDeviceRegistration).collect(Collectors.toList()) +
+                    "\nSilent payment addresses:" + silentPaymentAddresses;
         }
     }
 }

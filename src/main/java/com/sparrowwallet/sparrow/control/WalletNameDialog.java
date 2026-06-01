@@ -1,5 +1,6 @@
 package com.sparrowwallet.sparrow.control;
 
+import com.sparrowwallet.drongo.policy.PolicyType;
 import com.sparrowwallet.sparrow.AppServices;
 import com.sparrowwallet.sparrow.glyphfont.FontAwesome5;
 import com.sparrowwallet.sparrow.io.Config;
@@ -10,6 +11,8 @@ import javafx.beans.binding.Bindings;
 import javafx.beans.binding.BooleanBinding;
 import javafx.geometry.Insets;
 import javafx.scene.control.*;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import org.controlsfx.control.textfield.CustomTextField;
@@ -46,9 +49,13 @@ public class WalletNameDialog extends Dialog<WalletNameDialog.NameAndBirthDate> 
     }
 
     public WalletNameDialog(String initialName, boolean hasExistingTransactions, Date startDate, boolean rename) {
+        this(initialName, hasExistingTransactions, null, startDate, rename);
+    }
+
+    public WalletNameDialog(String initialName, boolean hasExistingTransactions, PolicyType walletPolicyType, Date startDate, boolean rename) {
         final DialogPane dialogPane = getDialogPane();
         AppServices.setStageIcon(dialogPane.getScene().getWindow());
-        boolean requestBirthDate = !rename && (Config.get().getServerType() == null || Config.get().getServerType() == ServerType.BITCOIN_CORE);
+        boolean requestBirthDate = !rename && (walletPolicyType == PolicyType.SINGLE_SP || Config.get().getServerType() == null || Config.get().getServerType() == ServerType.BITCOIN_CORE);
 
         setTitle("Wallet Name");
         dialogPane.setHeaderText("Enter a name for this wallet:");
@@ -56,6 +63,11 @@ public class WalletNameDialog extends Dialog<WalletNameDialog.NameAndBirthDate> 
         dialogPane.getButtonTypes().addAll(ButtonType.CANCEL);
         dialogPane.setPrefWidth(460);
         dialogPane.setPrefHeight(requestBirthDate ? 250 : 200);
+        dialogPane.getScene().addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+            if (event.getCode() == KeyCode.ESCAPE) {
+                WalletNameDialog.this.close();
+            }
+        });
         AppServices.moveToActiveWindowScreen(this);
 
         Glyph wallet = new Glyph(FontAwesome5.FONT_NAME, FontAwesome5.Glyph.WALLET);
@@ -66,7 +78,7 @@ public class WalletNameDialog extends Dialog<WalletNameDialog.NameAndBirthDate> 
         name = (CustomTextField)TextFields.createClearableTextField();
         name.setText(initialName);
         name.setTextFormatter(new TextFormatter<>((change) -> {
-            change.setText(change.getText().replaceAll("[\\\\/:*?\"<>|]", "_"));
+            change.setText(change.getText().replaceAll("[\\\\/:*?\"<>|;`]", "_"));
             return change;
         }));
         content.getChildren().add(name);

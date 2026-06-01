@@ -1,10 +1,7 @@
 package com.sparrowwallet.sparrow.io.db;
 
 import com.sparrowwallet.drongo.crypto.EncryptedData;
-import com.sparrowwallet.drongo.wallet.DeterministicSeed;
-import com.sparrowwallet.drongo.wallet.Keystore;
-import com.sparrowwallet.drongo.wallet.MasterPrivateExtendedKey;
-import com.sparrowwallet.drongo.wallet.Wallet;
+import com.sparrowwallet.drongo.wallet.*;
 import org.jdbi.v3.sqlobject.config.RegisterRowMapper;
 import org.jdbi.v3.sqlobject.statement.GetGeneratedKeys;
 import org.jdbi.v3.sqlobject.statement.SqlQuery;
@@ -13,16 +10,16 @@ import org.jdbi.v3.sqlobject.statement.SqlUpdate;
 import java.util.List;
 
 public interface KeystoreDao {
-    @SqlQuery("select keystore.id, keystore.label, keystore.source, keystore.walletModel, keystore.masterFingerprint, keystore.derivationPath, keystore.extendedPublicKey, keystore.externalPaymentCode, " +
+    @SqlQuery("select keystore.id, keystore.label, keystore.source, keystore.walletModel, keystore.masterFingerprint, keystore.derivationPath, keystore.extendedPublicKey, keystore.externalPaymentCode, keystore.silentPaymentScanAddress, keystore.deviceRegistration, " +
               "masterPrivateExtendedKey.id, masterPrivateExtendedKey.privateKey, masterPrivateExtendedKey.chainCode, masterPrivateExtendedKey.initialisationVector, masterPrivateExtendedKey.encryptedBytes, masterPrivateExtendedKey.keySalt, masterPrivateExtendedKey.deriver, masterPrivateExtendedKey.crypter, " +
               "seed.id, seed.type, seed.mnemonicString, seed.initialisationVector, seed.encryptedBytes, seed.keySalt, seed.deriver, seed.crypter, seed.needsPassphrase, seed.creationTimeSeconds " +
               "from keystore left join masterPrivateExtendedKey on keystore.masterPrivateExtendedKey = masterPrivateExtendedKey.id left join seed on keystore.seed = seed.id where keystore.wallet = ? order by keystore.index asc")
     @RegisterRowMapper(KeystoreMapper.class)
     List<Keystore> getForWalletId(Long id);
 
-    @SqlUpdate("insert into keystore (label, source, walletModel, masterFingerprint, derivationPath, extendedPublicKey, externalPaymentCode, masterPrivateExtendedKey, seed, wallet, index) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    @SqlUpdate("insert into keystore (label, source, walletModel, masterFingerprint, derivationPath, extendedPublicKey, externalPaymentCode, silentPaymentScanAddress, deviceRegistration, masterPrivateExtendedKey, seed, wallet, index) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
     @GetGeneratedKeys("id")
-    long insert(String label, int source, int walletModel, String masterFingerprint, String derivationPath, String extendedPublicKey, String externalPaymentCode, Long masterPrivateExtendedKey, Long seed, long wallet, int index);
+    long insert(String label, int source, int walletModel, String masterFingerprint, String derivationPath, String extendedPublicKey, String externalPaymentCode, byte[] silentPaymentScanAddress, byte[] deviceRegistration, Long masterPrivateExtendedKey, Long seed, long wallet, int index);
 
     @SqlUpdate("insert into masterPrivateExtendedKey (privateKey, chainCode, initialisationVector, encryptedBytes, keySalt, deriver, crypter, creationTimeSeconds) values (?, ?, ?, ?, ?, ?, ?, ?)")
     @GetGeneratedKeys("id")
@@ -40,6 +37,9 @@ public interface KeystoreDao {
 
     @SqlUpdate("update keystore set label = ? where id = ?")
     void updateLabel(String label, long id);
+
+    @SqlUpdate("update keystore set deviceRegistration = ? where id = ?")
+    void updateDeviceRegistration(byte[] deviceRegistration, long id);
 
     default void addKeystores(Wallet wallet) {
         for(int i = 0; i < wallet.getKeystores().size(); i++) {
@@ -63,7 +63,7 @@ public interface KeystoreDao {
                     long id = insertSeed(seed.getType().ordinal(), null, data.getInitialisationVector(), data.getEncryptedBytes(), data.getKeySalt(), data.getEncryptionType().getDeriver().ordinal(), data.getEncryptionType().getCrypter().ordinal(), seed.needsPassphrase(), seed.getCreationTimeSeconds());
                     seed.setId(id);
                 } else {
-                    long id = insertSeed(seed.getType().ordinal(), seed.getMnemonicString().asString(), null, null, null, null, null, seed.needsPassphrase(), seed.getCreationTimeSeconds());
+                    long id = insertSeed(seed.getType().ordinal(), seed.getMnemonicString(true).asString(), null, null, null, null, null, seed.needsPassphrase(), seed.getCreationTimeSeconds());
                     seed.setId(id);
                 }
             }
@@ -71,8 +71,10 @@ public interface KeystoreDao {
             long id = insert(truncate(keystore.getLabel()), keystore.getSource().ordinal(), keystore.getWalletModel().ordinal(),
                     keystore.hasMasterPrivateKey() || wallet.isBip47() ? null : keystore.getKeyDerivation().getMasterFingerprint(),
                     keystore.getKeyDerivation().getDerivationPath(),
-                    keystore.hasMasterPrivateKey() || wallet.isBip47() ? null : keystore.getExtendedPublicKey().toString(),
+                    keystore.hasMasterPrivateKey() || wallet.isBip47() || keystore.getExtendedPublicKey() == null ? null : keystore.getExtendedPublicKey().toString(),
                     keystore.getExternalPaymentCode() == null ? null : keystore.getExternalPaymentCode().toString(),
+                    keystore.getSilentPaymentScanAddress() == null ? null : keystore.getSilentPaymentScanAddress().toBytes(),
+                    keystore.getDeviceRegistration(),
                     keystore.getMasterPrivateExtendedKey() == null ? null : keystore.getMasterPrivateExtendedKey().getId(),
                     keystore.getSeed() == null ? null : keystore.getSeed().getId(), wallet.getId(), i);
             keystore.setId(id);
@@ -96,12 +98,12 @@ public interface KeystoreDao {
                 EncryptedData data = seed.getEncryptedData();
                 updateSeed(seed.getType().ordinal(), null, data.getInitialisationVector(), data.getEncryptedBytes(), data.getKeySalt(), data.getEncryptionType().getDeriver().ordinal(), data.getEncryptionType().getCrypter().ordinal(), seed.needsPassphrase(), seed.getCreationTimeSeconds(), seed.getId());
             } else {
-                updateSeed(seed.getType().ordinal(), seed.getMnemonicString().asString(), null, null, null, null, null, seed.needsPassphrase(), seed.getCreationTimeSeconds(), seed.getId());
+                updateSeed(seed.getType().ordinal(), seed.getMnemonicString(true).asString(), null, null, null, null, null, seed.needsPassphrase(), seed.getCreationTimeSeconds(), seed.getId());
             }
         }
     }
 
     default String truncate(String label) {
-        return (label != null && label.length() > 255 ? label.substring(0, 255) : label);
+        return (label != null && label.length() > Persistable.MAX_LABEL_LENGTH ? label.substring(0, Persistable.MAX_LABEL_LENGTH) : label);
     }
 }

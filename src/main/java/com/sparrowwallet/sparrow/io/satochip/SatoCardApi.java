@@ -9,6 +9,7 @@ import com.sparrowwallet.drongo.crypto.ChildNumber;
 import com.sparrowwallet.drongo.crypto.ECKey;
 import com.sparrowwallet.drongo.crypto.ECDSASignature;
 import com.sparrowwallet.drongo.crypto.SchnorrSignature;
+import com.sparrowwallet.drongo.policy.PolicyType;
 import com.sparrowwallet.drongo.protocol.*;
 import com.sparrowwallet.drongo.psbt.PSBT;
 import com.sparrowwallet.drongo.psbt.PSBTInput;
@@ -122,8 +123,8 @@ public class SatoCardApi extends CardApi {
     }
 
     @Override
-    public Service<Keystore> getImportService(List<ChildNumber> derivation, StringProperty messageProperty) {
-        return new CardImportPane.CardImportService(new Satochip(), pin, derivation, messageProperty);
+    public Service<Keystore> getImportService(PolicyType policyType, List<ChildNumber> derivation, StringProperty messageProperty) {
+        return new CardImportPane.CardImportService(new Satochip(), policyType, pin, derivation, messageProperty);
     }
 
     /*
@@ -142,7 +143,7 @@ public class SatoCardApi extends CardApi {
         String masterXpub = this.cardProtocol.cardBip32GetXpub("m", xtype);
         ExtendedKey masterExtendedKey = ExtendedKey.fromDescriptor(masterXpub);
         String masterFingerprint = Utils.bytesToHex(masterExtendedKey.getKey().getFingerprint());
-        KeyDerivation keyDerivation = new KeyDerivation(masterFingerprint, keyDerivationString);
+        KeyDerivation keyDerivation = new KeyDerivation(masterFingerprint, keyDerivationString, true);
 
         Keystore keystore = new Keystore();
         keystore.setLabel(WalletModel.SATOCHIP.toDisplayString());
@@ -164,8 +165,9 @@ public class SatoCardApi extends CardApi {
         for(PSBTInput psbtInput : psbt.getPsbtInputs()) {
             if(!psbtInput.isSigned()) {
                 WalletNode signingNode = signingNodes.get(psbtInput);
-                String fullPath = null;
                 List<Keystore> keystores = wallet.getKeystores();
+                // recover derivation path from Satochip keystore
+                String fullPath = null;
                 for(int i = 0; i < keystores.size(); i++) {
                     Keystore keystore = keystores.get(i);
                     WalletModel walletModel = keystore.getWalletModel();
@@ -173,11 +175,16 @@ public class SatoCardApi extends CardApi {
                         String basePath = keystore.getKeyDerivation().getDerivationPath();
                         String extendedPath = signingNode.getDerivationPath().substring(1);
                         fullPath = basePath + extendedPath;
-                        keystore.getPubKey(signingNode);
                         break;
                     }
                 }
-
+                if (fullPath == null) {
+                    // recover a default derivation path from first keystore
+                    Keystore keystore = keystores.get(0);
+                    String basePath = keystore.getKeyDerivation().getDerivationPath();
+                    String extendedPath = signingNode.getDerivationPath().substring(1);
+                    fullPath = basePath + extendedPath;
+                }
                 psbtInput.sign(new CardPSBTInputSigner(signingNode, fullPath));
             }
         }

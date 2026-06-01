@@ -6,17 +6,14 @@ import com.sparrowwallet.drongo.protocol.Script;
 import com.sparrowwallet.drongo.protocol.Transaction;
 import com.sparrowwallet.drongo.protocol.TransactionInput;
 import com.sparrowwallet.drongo.protocol.TransactionOutput;
-import com.sparrowwallet.drongo.psbt.PSBT;
-import com.sparrowwallet.drongo.psbt.PSBTInput;
-import com.sparrowwallet.drongo.psbt.PSBTOutput;
-import com.sparrowwallet.drongo.psbt.PSBTParseException;
+import com.sparrowwallet.drongo.psbt.*;
 import com.sparrowwallet.drongo.uri.BitcoinURI;
 import com.sparrowwallet.drongo.wallet.Wallet;
 import com.sparrowwallet.drongo.wallet.WalletNode;
 import com.sparrowwallet.sparrow.AppServices;
 import com.sparrowwallet.sparrow.net.HttpClientService;
 import com.sparrowwallet.sparrow.net.Protocol;
-import com.sparrowwallet.sparrow.net.http.client.HttpResponseException;
+import com.sparrowwallet.tern.http.client.HttpResponseException;
 import javafx.concurrent.Service;
 import javafx.concurrent.Task;
 import org.slf4j.Logger;
@@ -38,7 +35,11 @@ public class Payjoin {
     public Payjoin(BitcoinURI payjoinURI, Wallet wallet, PSBT psbt) {
         this.payjoinURI = payjoinURI;
         this.wallet = wallet;
-        this.psbt = psbt;
+        this.psbt = psbt.getForExport();
+
+        if(payjoinURI.getAddress() == null) {
+            throw new IllegalArgumentException("Payjoin URI must have an address");
+        }
 
         for(PSBTInput psbtInput : psbt.getPsbtInputs()) {
             if(psbtInput.getUtxo() == null) {
@@ -51,7 +52,7 @@ public class Payjoin {
         }
     }
 
-    public PSBT requestPayjoinPSBT(boolean allowOutputSubstitution) throws PayjoinReceiverException {
+    public PSBT requestPayjoinPSBT(boolean allowOutputSubstitution) throws PayjoinReceiverException, PSBTProofException {
         if(!payjoinURI.isPayjoinOutputSubstitutionAllowed()) {
             allowOutputSubstitution = false;
         }
@@ -62,6 +63,8 @@ public class Payjoin {
             throw new PayjoinReceiverException("No payjoin URL provided");
         }
 
+        long additionalFeeContribution = getAdditionalFeeContribution();
+
         try {
             String base64Psbt = psbt.getPublicCopy().toBase64String();
 
@@ -70,7 +73,7 @@ public class Payjoin {
             long maxAdditionalFeeContribution = 0;
             if(changeOutputIndex > -1) {
                 appendQuery += "&additionalfeeoutputindex=" + changeOutputIndex;
-                maxAdditionalFeeContribution = getAdditionalFeeContribution();
+                maxAdditionalFeeContribution = additionalFeeContribution;
                 appendQuery += "&maxadditionalfeecontribution=" + maxAdditionalFeeContribution;
             }
 
@@ -104,21 +107,25 @@ public class Payjoin {
         } catch(PSBTParseException e) {
             log.error("Error parsing received PSBT", e);
             throw new PayjoinReceiverException("Payjoin receiver returned invalid PSBT", e);
+        } catch(PayjoinReceiverException e) {
+            log.error("Payjoin receiver error", e);
+            throw e;
         } catch(Exception e) {
             log.error("Payjoin error", e);
             throw new PayjoinReceiverException("Payjoin error", e);
         }
     }
 
-    private void checkProposal(PSBT original, PSBT proposal, int changeOutputIndex, long maxAdditionalFeeContribution, boolean allowOutputSubstitution) throws PayjoinReceiverException {
+    private void checkProposal(PSBT original, PSBT proposal, int changeOutputIndex, long maxAdditionalFeeContribution, boolean allowOutputSubstitution) throws PayjoinReceiverException, PSBTProofException {
+        Transaction originalTx = original.getTransaction();
         Queue<Map.Entry<TransactionInput, PSBTInput>> originalInputs = new ArrayDeque<>();
         for(int i = 0; i < original.getPsbtInputs().size(); i++) {
-            originalInputs.add(Map.entry(original.getTransaction().getInputs().get(i), original.getPsbtInputs().get(i)));
+            originalInputs.add(Map.entry(originalTx.getInputs().get(i), original.getPsbtInputs().get(i)));
         }
 
         Queue<Map.Entry<TransactionOutput, PSBTOutput>> originalOutputs = new ArrayDeque<>();
         for(int i = 0; i < original.getPsbtOutputs().size(); i++) {
-            originalOutputs.add(Map.entry(original.getTransaction().getOutputs().get(i), original.getPsbtOutputs().get(i)));
+            originalOutputs.add(Map.entry(originalTx.getOutputs().get(i), original.getPsbtOutputs().get(i)));
         }
 
         // Checking that the PSBT of the receiver is clean
@@ -126,7 +133,6 @@ public class Payjoin {
             throw new PayjoinReceiverException("Global xpubs should not be included in the receiver's PSBT");
         }
 
-        Transaction originalTx = original.getTransaction();
         Transaction proposalTx = proposal.getTransaction();
         // Verify that the transaction version, and nLockTime are unchanged.
         if(proposalTx.getVersion() != originalTx.getVersion()) {
@@ -147,7 +153,7 @@ public class Payjoin {
             }
 
             TransactionInput proposedTxIn = proposedPSBTInput.getInput();
-            boolean isOriginalInput = originalInputs.size() > 0 && originalInputs.peek().getKey().getOutpoint().equals(proposedTxIn.getOutpoint());
+            boolean isOriginalInput = !originalInputs.isEmpty() && originalInputs.peek().getKey().getOutpoint().equals(proposedTxIn.getOutpoint());
             if(isOriginalInput) {
                 Map.Entry<TransactionInput, PSBTInput> originalInput = originalInputs.remove();
                 TransactionInput originalTxIn = originalInput.getKey();
@@ -159,10 +165,6 @@ public class Payjoin {
                 // Verify the PSBT input is not finalized
                 if(proposedPSBTInput.isFinalized()) {
                     throw new PayjoinReceiverException("The receiver finalized one of the original inputs");
-                }
-                // Verify that non_witness_utxo and witness_utxo are not specified.
-                if(proposedPSBTInput.getNonWitnessUtxo() != null || proposedPSBTInput.getWitnessUtxo() != null) {
-                    throw new PayjoinReceiverException("The receiver added non_witness_utxo or witness_utxo to one of the original inputs");
                 }
                 sequences.add(proposedTxIn.getSequenceNumber());
 
@@ -220,11 +222,11 @@ public class Payjoin {
             }
 
             TransactionOutput proposedTxOut = proposalTx.getOutputs().get(i);
-            boolean isOriginalOutput = originalOutputs.size() > 0 && originalOutputs.peek().getKey().getScript().equals(proposedTxOut.getScript());
+            boolean isOriginalOutput = !originalOutputs.isEmpty() && originalOutputs.peek().getKey().getScript().equals(proposedTxOut.getScript());
             if(isOriginalOutput) {
                 Map.Entry<TransactionOutput, PSBTOutput> originalOutput = originalOutputs.remove();
                 if(originalOutput.getKey() == changeOutput) {
-                    var actualContribution = changeOutput.getValue() - proposedTxOut.getValue();
+                    var actualContribution = originalOutput.getKey().getValue() - proposedTxOut.getValue();
                     // The amount that was subtracted from the output's value is less than or equal to maxadditionalfeecontribution
                     if(actualContribution > maxAdditionalFeeContribution) {
                         throw new PayjoinReceiverException("The actual contribution is more than maxadditionalfeecontribution");
@@ -242,7 +244,7 @@ public class Payjoin {
                     // That's the payment output, the receiver may have changed it.
                 } else {
                     if(originalOutput.getKey().getValue() > proposedTxOut.getValue()) {
-                        throw new PayjoinReceiverException("The receiver decreased the value of one of the outputs");
+                        throw new PayjoinReceiverException("The receiver decreased the value of one of the outputs from " + originalOutput.getKey().getValue() + " sats to " + proposedTxOut.getValue() + " sats");
                     }
                 }
 
@@ -279,17 +281,17 @@ public class Payjoin {
         return -1;
     }
 
-    private long getAdditionalFeeContribution() {
+    private long getAdditionalFeeContribution() throws PSBTProofException {
         return getSingleInputFee();
     }
 
-    private long getSingleInputFee() {
+    private long getSingleInputFee() throws PSBTProofException {
         Transaction transaction = psbt.extractTransaction();
         double feeRate = psbt.getFee().doubleValue() / transaction.getVirtualSize();
         int vSize = 68;
 
-        if(transaction.getInputs().size() > 0) {
-            TransactionInput input = transaction.getInputs().get(0);
+        if(!transaction.getInputs().isEmpty()) {
+            TransactionInput input = transaction.getInputs().getFirst();
             vSize = input.getLength() * Transaction.WITNESS_SCALE_FACTOR;
             vSize += input.getWitness() != null ? input.getWitness().getLength() : 0;
             vSize = (int)Math.ceil((double)vSize / Transaction.WITNESS_SCALE_FACTOR);
@@ -335,7 +337,7 @@ public class Payjoin {
         @Override
         protected Task<PSBT> createTask() {
             return new Task<>() {
-                protected PSBT call() throws PayjoinReceiverException {
+                protected PSBT call() throws PayjoinReceiverException, PSBTProofException {
                     return payjoin.requestPayjoinPSBT(allowOutputSubstitution);
                 }
             };

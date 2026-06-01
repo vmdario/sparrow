@@ -2,20 +2,20 @@ package com.sparrowwallet.sparrow.control;
 
 import com.sparrowwallet.drongo.KeyDerivation;
 import com.sparrowwallet.drongo.wallet.Wallet;
+import com.sparrowwallet.drongo.wallet.WalletModel;
 import com.sparrowwallet.sparrow.AppServices;
 import javafx.application.Platform;
+import javafx.collections.ListChangeListener;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.*;
-import javafx.scene.image.Image;
-import javafx.scene.image.ImageView;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 
-import java.util.Arrays;
-import java.util.OptionalDouble;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class TitledDescriptionPane extends TitledPane {
     private Label mainLabel;
@@ -23,17 +23,18 @@ public class TitledDescriptionPane extends TitledPane {
     protected Hyperlink showHideLink;
     protected HBox buttonBox;
 
-    public TitledDescriptionPane(String title, String description, String content, String imageUrl) {
+    public TitledDescriptionPane(String title, String description, String content, WalletModel walletModel) {
         getStylesheets().add(AppServices.class.getResource("general.css").toExternalForm());
         getStyleClass().add("titled-description-pane");
+        setAccessibleText(title);
 
         setPadding(Insets.EMPTY);
-        setGraphic(getTitle(title, description, imageUrl));
+        setGraphic(getTitle(title, description, walletModel));
         setContent(getContentBox(content));
         removeArrow();
     }
 
-    protected Node getTitle(String title, String description, String imageUrl) {
+    protected Node getTitle(String title, String description, WalletModel walletModel) {
         HBox listItem = new HBox();
         listItem.setPadding(new Insets(10, 20, 10, 10));
         listItem.setSpacing(10);
@@ -43,12 +44,8 @@ public class TitledDescriptionPane extends TitledPane {
         imageBox.setMinHeight(50);
         listItem.getChildren().add(imageBox);
 
-        Image image = new Image(imageUrl, 50, 50, true, true);
-        if (!image.isError()) {
-            ImageView imageView = new ImageView();
-            imageView.setImage(image);
-            imageBox.getChildren().add(imageView);
-        }
+        WalletModelImage walletModelImage = new WalletModelImage(walletModel);
+        imageBox.getChildren().add(walletModelImage);
 
         VBox labelsBox = new VBox();
         labelsBox.setSpacing(5);
@@ -127,25 +124,45 @@ public class TitledDescriptionPane extends TitledPane {
     }
 
     protected Node getContentBox(String message) {
-        Label details = new Label(message);
-        details.setWrapText(true);
-
-        HBox contentBox = new HBox();
+        // Create the VBox to hold text and Hyperlink components
+        VBox contentBox = new VBox();
         contentBox.setAlignment(Pos.TOP_LEFT);
-        contentBox.getChildren().add(details);
         contentBox.setPadding(new Insets(10, 30, 10, 30));
+        contentBox.setPrefWidth(400);  // Set preferred width for wrapping
+        contentBox.setMinHeight(60);
 
-        double width = TextUtils.computeTextWidth(details.getFont(), message, 0.0D);
-        double numLines = Math.max(1, Math.ceil(width / 400d));
+        // Define the regex pattern to match URLs
+        String urlPattern = "(\\[https?://\\S+])";
+        Pattern pattern = Pattern.compile(urlPattern);
+        Matcher matcher = pattern.matcher(message);
 
-        //Handle long words like txids
-        OptionalDouble maxWordLength = Arrays.stream(message.split(" ")).mapToDouble(word -> TextUtils.computeTextWidth(details.getFont(), message, 0.0D)).max();
-        if(maxWordLength.isPresent() && maxWordLength.getAsDouble() > 300.0) {
-            numLines += 1.0;
+        // StringBuilder to track the non-URL text
+        int lastMatchEnd = 0;
+
+        // Iterate through the matches and build the components
+        while (matcher.find()) {
+            // Add the text before the URL as a normal Label
+            if (matcher.start() > lastMatchEnd) {
+                String nonUrlText = message.substring(lastMatchEnd, matcher.start());
+                Label textLabel = createWrappedLabel(nonUrlText);
+                contentBox.getChildren().add(textLabel);
+            }
+
+            // Extract the URL and create a Hyperlink for it
+            String url = matcher.group(1).replaceAll("\\[", "").replaceAll("\\]", "");
+            Hyperlink hyperlink = createHyperlink(url);
+            contentBox.getChildren().add(hyperlink);
+
+            // Update last match end
+            lastMatchEnd = matcher.end();
         }
 
-        double height = Math.max(60, numLines * 20);
-        contentBox.setPrefHeight(height);
+        // Add remaining text after the last URL (if any)
+        if (lastMatchEnd < message.length()) {
+            String remainingText = message.substring(lastMatchEnd);
+            Label remainingLabel = createWrappedLabel(remainingText);
+            contentBox.getChildren().add(remainingLabel);
+        }
 
         return contentBox;
     }
@@ -166,6 +183,22 @@ public class TitledDescriptionPane extends TitledPane {
         });
     }
 
+    protected static void setDefaultButton(ButtonBase button) {
+        button.getStyleClass().add("default-button");
+        if(button instanceof SplitMenuButton splitMenuButton) {
+            for(MenuItem item : splitMenuButton.getItems()) {
+                item.getStyleClass().add("default-button");
+            }
+            splitMenuButton.getItems().addListener((ListChangeListener<MenuItem>) c -> {
+                while(c.next()) {
+                    for(MenuItem item : c.getAddedSubList()) {
+                        item.getStyleClass().add("default-button");
+                    }
+                }
+            });
+        }
+    }
+
     protected static int getAccount(Wallet wallet, KeyDerivation requiredDerivation) {
         if(wallet == null || requiredDerivation == null) {
             return 0;
@@ -177,5 +210,22 @@ public class TitledDescriptionPane extends TitledPane {
         }
 
         return account;
+    }
+
+    // Helper method to create a wrapped Label with a specified maxWidth
+    private Label createWrappedLabel(String text) {
+        Label label = new Label(text);
+        label.setWrapText(true);
+        label.setMaxWidth(400);
+        return label;
+    }
+
+    // Helper method to create a Hyperlink
+    private Hyperlink createHyperlink(String url) {
+        Hyperlink hyperlink = new Hyperlink(url);
+        hyperlink.setMaxWidth(400);  // Set maximum width for wrapping
+        hyperlink.setWrapText(true);  // Ensure text wrapping in the hyperlink
+        hyperlink.setOnAction(_ -> AppServices.get().getApplication().getHostServices().showDocument(url));
+        return hyperlink;
     }
 }

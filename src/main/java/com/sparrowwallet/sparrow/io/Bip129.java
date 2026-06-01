@@ -4,6 +4,7 @@ import com.google.common.io.CharStreams;
 import com.sparrowwallet.drongo.KeyPurpose;
 import com.sparrowwallet.drongo.OutputDescriptor;
 import com.sparrowwallet.drongo.Utils;
+import com.sparrowwallet.drongo.policy.PolicyType;
 import com.sparrowwallet.drongo.crypto.Pbkdf2KeyDeriver;
 import com.sparrowwallet.drongo.protocol.ScriptType;
 import com.sparrowwallet.drongo.protocol.Sha256Hash;
@@ -93,7 +94,7 @@ public class Bip129 implements KeystoreFileExport, KeystoreFileImport, WalletExp
     }
 
     @Override
-    public Keystore getKeystore(ScriptType scriptType, InputStream inputStream, String password) throws ImportException {
+    public Keystore getKeystore(PolicyType policyType, ScriptType scriptType, InputStream inputStream, String password) throws ImportException {
         try {
             BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8));
             if(password != null) {
@@ -192,7 +193,7 @@ public class Bip129 implements KeystoreFileExport, KeystoreFileImport, WalletExp
     public void exportWallet(Wallet wallet, OutputStream outputStream, String password) throws ExportException {
         try {
             String record = "BSMS 1.0\n" +
-                    OutputDescriptor.getOutputDescriptor(wallet) +
+                    OutputDescriptor.getOutputDescriptor(wallet, KeyPurpose.DEFAULT_PURPOSES, null) +
                     "\n/0/*,/1/*\n" +
                     wallet.getNode(KeyPurpose.RECEIVE).getChildren().iterator().next().getAddress();
             outputStream.write(record.getBytes(StandardCharsets.UTF_8));
@@ -235,6 +236,10 @@ public class Bip129 implements KeystoreFileExport, KeystoreFileImport, WalletExp
             }
 
             String header = reader.readLine();
+            if(header == null || !header.startsWith("BSMS")) {
+                throw new ImportException("Not a BSMS file");
+            }
+
             String descriptor = reader.readLine();
             String paths = reader.readLine();
             String address = reader.readLine();

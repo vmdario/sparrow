@@ -20,8 +20,6 @@ import org.slf4j.LoggerFactory;
 
 import java.util.*;
 
-import static com.sparrowwallet.sparrow.wallet.KeystoreController.DEFAULT_WATCH_ONLY_FINGERPRINT;
-
 public class WatchOnlyDialog extends NewWalletDialog {
     private static final Logger log = LoggerFactory.getLogger(WatchOnlyDialog.class);
 
@@ -115,18 +113,18 @@ public class WatchOnlyDialog extends NewWalletDialog {
         Set<ScriptType> scriptTypes = new LinkedHashSet<>();
         scriptTypes.add(ScriptType.P2WPKH);
         scriptTypes.add(header.getDefaultScriptType());
-        scriptTypes.addAll(ScriptType.getAddressableScriptTypes(PolicyType.SINGLE));
+        scriptTypes.addAll(ScriptType.getAddressableScriptTypes(PolicyType.SINGLE_HD));
 
         List<Wallet> wallets = new ArrayList<>();
         for(ScriptType scriptType : scriptTypes) {
             Wallet wallet = new Wallet(walletName);
-            wallet.setPolicyType(PolicyType.SINGLE);
+            wallet.setPolicyType(PolicyType.SINGLE_HD);
             wallet.setScriptType(scriptType);
 
             Keystore keystore = new Keystore();
             keystore.setSource(KeystoreSource.SW_WATCH);
             keystore.setWalletModel(WalletModel.SPARROW);
-            keystore.setKeyDerivation(new KeyDerivation(DEFAULT_WATCH_ONLY_FINGERPRINT, scriptType.getDefaultDerivationPath()));
+            keystore.setKeyDerivation(new KeyDerivation(KeyDerivation.DEFAULT_WATCH_ONLY_FINGERPRINT, scriptType.getDefaultDerivationPath()));
             keystore.setExtendedPublicKey(xpub);
             wallet.makeLabelsUnique(keystore);
             wallet.getKeystores().add(keystore);

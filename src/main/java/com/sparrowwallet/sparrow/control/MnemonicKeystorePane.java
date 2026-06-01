@@ -2,8 +2,11 @@ package com.sparrowwallet.sparrow.control;
 
 import com.sparrowwallet.drongo.wallet.Bip39MnemonicCode;
 import com.sparrowwallet.drongo.wallet.DeterministicSeed;
+import com.sparrowwallet.drongo.wallet.MnemonicException;
+import com.sparrowwallet.drongo.wallet.WalletModel;
+import com.sparrowwallet.drongo.wallet.slip39.Slip39MnemonicCode;
 import com.sparrowwallet.sparrow.AppServices;
-import com.sparrowwallet.sparrow.glyphfont.FontAwesome5;
+import com.sparrowwallet.sparrow.glyphfont.GlyphUtils;
 import javafx.application.Platform;
 import javafx.beans.property.IntegerProperty;
 import javafx.beans.property.SimpleIntegerProperty;
@@ -12,20 +15,15 @@ import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
 import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
-import javafx.concurrent.ScheduledService;
-import javafx.concurrent.Task;
 import javafx.geometry.Insets;
-import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.input.Clipboard;
 import javafx.scene.layout.*;
 import javafx.util.Callback;
-import javafx.util.Duration;
 import org.controlsfx.control.textfield.AutoCompletionBinding;
 import org.controlsfx.control.textfield.TextFields;
-import org.controlsfx.glyphfont.Glyph;
 import org.controlsfx.validation.ValidationResult;
 import org.controlsfx.validation.ValidationSupport;
 import org.controlsfx.validation.Validator;
@@ -41,7 +39,7 @@ public class MnemonicKeystorePane extends TitledDescriptionPane {
     private static final Logger log = LoggerFactory.getLogger(MnemonicKeystorePane.class);
 
     protected SplitMenuButton enterMnemonicButton;
-    protected TilePane wordsPane;
+    protected GridPane wordsPane;
     protected Label validLabel;
     protected Label invalidLabel;
 
@@ -49,8 +47,8 @@ public class MnemonicKeystorePane extends TitledDescriptionPane {
     protected final SimpleStringProperty passphraseProperty = new SimpleStringProperty("");
     protected IntegerProperty defaultWordSizeProperty;
 
-    public MnemonicKeystorePane(String title, String description, String content, String imageUrl) {
-        super(title, description, content, imageUrl);
+    public MnemonicKeystorePane(String title, String description, String content, WalletModel walletModel) {
+        super(title, description, content, walletModel);
     }
 
     @Override
@@ -111,23 +109,9 @@ public class MnemonicKeystorePane extends TitledDescriptionPane {
                     wordEntry.getEditor().setText(words.get(i));
                     wordEntry.getEditor().setEditable(false);
                 } else {
-                    ScheduledService<Void> service = new ScheduledService<>() {
-                        @Override
-                        protected Task<Void> createTask() {
-                            return new Task<>() {
-                                @Override
-                                protected Void call() {
-                                    return null;
-                                }
-                            };
-                        }
-                    };
-                    service.setDelay(Duration.millis(500));
-                    service.setOnSucceeded(event1 -> {
-                        service.cancel();
+                    AppServices.runAfterDelay(500, () -> {
                         Platform.runLater(() -> wordEntry.getEditor().requestFocus());
                     });
-                    service.start();
                 }
             }
         }
@@ -153,6 +137,10 @@ public class MnemonicKeystorePane extends TitledDescriptionPane {
 
     protected void showWordList(DeterministicSeed seed) {
         List<String> words = seed.getMnemonicCode();
+        showWordList(words);
+    }
+
+    protected void showWordList(List<String> words) {
         setContent(getMnemonicWordsEntry(words.size(), true, true));
         setExpanded(true);
 
@@ -174,11 +162,9 @@ public class MnemonicKeystorePane extends TitledDescriptionPane {
         VBox vBox = new VBox();
         vBox.setSpacing(10);
 
-        wordsPane = new TilePane();
-        wordsPane.setPrefRows(numWords/3);
+        wordsPane = new GridPane();
         wordsPane.setHgap(10);
         wordsPane.setVgap(10);
-        wordsPane.setOrientation(Orientation.VERTICAL);
 
         List<String> words = new ArrayList<>();
         for(int i = 0; i < numWords; i++) {
@@ -189,13 +175,20 @@ public class MnemonicKeystorePane extends TitledDescriptionPane {
         wordEntriesProperty = new SimpleListProperty<>(wordEntryList);
         List<WordEntry> wordEntries = new ArrayList<>(numWords);
         for(int i = 0; i < numWords; i++) {
-            wordEntries.add(new WordEntry(i, wordEntryList));
+            wordEntries.add(new WordEntry(i, wordEntryList, getWordlistProvider()));
         }
         for(int i = 0; i < numWords - 1; i++) {
             wordEntries.get(i).setNextEntry(wordEntries.get(i + 1));
             wordEntries.get(i).setNextField(wordEntries.get(i + 1).getEditor());
         }
-        wordsPane.getChildren().addAll(wordEntries);
+
+        int numCols = 3;
+        int numRows = Math.ceilDiv(numWords, numCols);
+        for(int i = 0; i < wordEntries.size(); i++) {
+            int col = i / numRows;
+            int row = i % numRows;
+            wordsPane.add(wordEntries.get(i), col, row);
+        }
 
         vBox.getChildren().add(wordsPane);
 
@@ -215,7 +208,7 @@ public class MnemonicKeystorePane extends TitledDescriptionPane {
         buttonPane.getChildren().add(leftBox);
         AnchorPane.setLeftAnchor(leftBox, 0.0);
 
-        validLabel = new Label("Valid checksum", getValidGlyph());
+        validLabel = new Label("Valid checksum", GlyphUtils.getSuccessGlyph());
         validLabel.setContentDisplay(ContentDisplay.LEFT);
         validLabel.setGraphicTextGap(5.0);
         validLabel.managedProperty().bind(validLabel.visibleProperty());
@@ -224,7 +217,7 @@ public class MnemonicKeystorePane extends TitledDescriptionPane {
         AnchorPane.setTopAnchor(validLabel, 5.0);
         AnchorPane.setLeftAnchor(validLabel, 0.0);
 
-        invalidLabel = new Label("Invalid checksum", getInvalidGlyph());
+        invalidLabel = new Label("Invalid checksum", GlyphUtils.getInvalidGlyph());
         invalidLabel.setContentDisplay(ContentDisplay.LEFT);
         invalidLabel.setGraphicTextGap(5.0);
         invalidLabel.managedProperty().bind(invalidLabel.visibleProperty());
@@ -242,7 +235,7 @@ public class MnemonicKeystorePane extends TitledDescriptionPane {
                     empty = false;
                 }
 
-                if(!WordEntry.isValid(word)) {
+                if(!getWordlistProvider().isValid(word)) {
                     validWords = false;
                 }
             }
@@ -278,13 +271,20 @@ public class MnemonicKeystorePane extends TitledDescriptionPane {
         //nothing by default
     }
 
+    protected WordlistProvider getWordlistProvider() {
+        return getWordListProvider(DeterministicSeed.Type.BIP39);
+    }
+
+    protected WordlistProvider getWordListProvider(DeterministicSeed.Type type) {
+        return type == DeterministicSeed.Type.SLIP39 ? new Slip39WordlistProvider() : new Bip39WordlistProvider();
+    }
+
     protected static class WordEntry extends HBox {
-        private static List<String> wordList;
         private final TextField wordField;
         private WordEntry nextEntry;
         private TextField nextField;
 
-        public WordEntry(int wordNumber, ObservableList<String> wordEntryList) {
+        public WordEntry(int wordNumber, ObservableList<String> wordEntryList, WordlistProvider wordlistProvider) {
             super();
             setAlignment(Pos.CENTER_RIGHT);
 
@@ -302,7 +302,7 @@ public class MnemonicKeystorePane extends TitledDescriptionPane {
                         for(int i = 0; i < words.length; i++) {
                             String word = words[i];
                             if(entry.nextField != null) {
-                                if(i == words.length - 2 && isValid(word)) {
+                                if(i == words.length - 2 && wordlistProvider.isValid(word)) {
                                     label.requestFocus();
                                 } else {
                                     entry.nextField.requestFocus();
@@ -321,6 +321,7 @@ public class MnemonicKeystorePane extends TitledDescriptionPane {
                 }
             };
             wordField.setMaxWidth(100);
+            wordField.setAccessibleText("Word " + (wordNumber + 1));
             TextFormatter<?> formatter = new TextFormatter<>((TextFormatter.Change change) -> {
                 String text = change.getText();
                 // if text was added, fix the text to fit the requirements
@@ -335,8 +336,7 @@ public class MnemonicKeystorePane extends TitledDescriptionPane {
             });
             wordField.setTextFormatter(formatter);
 
-            wordList = Bip39MnemonicCode.INSTANCE.getWordList();
-            AutoCompletionBinding<String> autoCompletionBinding = TextFields.bindAutoCompletion(wordField, new WordlistSuggestionProvider(wordList, wordNumber, wordEntryList));
+            AutoCompletionBinding<String> autoCompletionBinding = TextFields.bindAutoCompletion(wordField, new WordlistSuggestionProvider(wordlistProvider, wordNumber, wordEntryList));
             autoCompletionBinding.setDelay(50);
             autoCompletionBinding.setOnAutoCompleted(event -> {
                 if(nextField != null) {
@@ -357,7 +357,7 @@ public class MnemonicKeystorePane extends TitledDescriptionPane {
             ValidationSupport validationSupport = new ValidationSupport();
             validationSupport.setValidationDecorator(new StyleClassValidationDecoration());
             validationSupport.registerValidator(wordField, Validator.combine(
-                    (Control c, String newValue) -> ValidationResult.fromErrorIf( c, "Invalid word", (newValue.length() > 0 || !lastWord) && !wordList.contains(newValue))
+                    (Control c, String newValue) -> ValidationResult.fromErrorIf( c, "Invalid word", (newValue.length() > 0 || !lastWord) && !wordlistProvider.isValid(newValue))
             ));
 
             wordField.textProperty().addListener((observable, oldValue, newValue) -> {
@@ -378,28 +378,24 @@ public class MnemonicKeystorePane extends TitledDescriptionPane {
         public void setNextField(TextField field) {
             this.nextField = field;
         }
-
-        public static boolean isValid(String word) {
-            return wordList.contains(word);
-        }
     }
 
     protected static class WordlistSuggestionProvider implements Callback<AutoCompletionBinding.ISuggestionRequest, Collection<String>> {
-        private final List<String> wordList;
+        private final WordlistProvider wordlistProvider;
         private final int wordNumber;
         private final ObservableList<String> wordEntryList;
 
-        public WordlistSuggestionProvider(List<String> wordList, int wordNumber, ObservableList<String> wordEntryList) {
-            this.wordList = wordList;
+        public WordlistSuggestionProvider(WordlistProvider wordlistProvider, int wordNumber, ObservableList<String> wordEntryList) {
+            this.wordlistProvider = wordlistProvider;
             this.wordNumber = wordNumber;
             this.wordEntryList = wordEntryList;
         }
 
         @Override
         public Collection<String> call(AutoCompletionBinding.ISuggestionRequest request) {
-            if(wordNumber == wordEntryList.size() - 1 && allPreviousWordsValid()) {
+            if(wordlistProvider.supportsPossibleLastWords() && wordNumber == wordEntryList.size() - 1 && allPreviousWordsValid()) {
                 try {
-                    List<String> possibleLastWords = Bip39MnemonicCode.INSTANCE.getPossibleLastWords(wordEntryList.subList(0, wordEntryList.size() - 1));
+                    List<String> possibleLastWords = wordlistProvider.getPossibleLastWords(wordEntryList.subList(0, wordEntryList.size() - 1));
                     if(!request.getUserText().isEmpty()) {
                         possibleLastWords.removeIf(s -> !s.startsWith(request.getUserText()));
                     }
@@ -412,7 +408,7 @@ public class MnemonicKeystorePane extends TitledDescriptionPane {
 
             List<String> suggestions = new ArrayList<>();
             if(!request.getUserText().isEmpty()) {
-                for(String word : wordList) {
+                for(String word : wordlistProvider.getWordlist()) {
                     if(word.startsWith(request.getUserText())) {
                         suggestions.add(word);
                     }
@@ -424,7 +420,7 @@ public class MnemonicKeystorePane extends TitledDescriptionPane {
 
         private boolean allPreviousWordsValid() {
             for(int i = 0; i < wordEntryList.size() - 1; i++) {
-                if(!WordEntry.isValid(wordEntryList.get(i))) {
+                if(!wordlistProvider.isValid(wordEntryList.get(i))) {
                     return false;
                 }
             }
@@ -485,17 +481,53 @@ public class MnemonicKeystorePane extends TitledDescriptionPane {
         }
     }
 
-    public static Glyph getValidGlyph() {
-        Glyph validGlyph = new Glyph(FontAwesome5.FONT_NAME, FontAwesome5.Glyph.CHECK_CIRCLE);
-        validGlyph.getStyleClass().add("success");
-        validGlyph.setFontSize(12);
-        return validGlyph;
+    protected interface WordlistProvider {
+        List<String> getWordlist();
+        boolean isValid(String word);
+        boolean supportsPossibleLastWords();
+        List<String> getPossibleLastWords(List<String> previousWords) throws MnemonicException.MnemonicLengthException, MnemonicException.MnemonicWordException;
     }
 
-    public static Glyph getInvalidGlyph() {
-        Glyph invalidGlyph = new Glyph(FontAwesome5.FONT_NAME, FontAwesome5.Glyph.EXCLAMATION_CIRCLE);
-        invalidGlyph.getStyleClass().add("failure");
-        invalidGlyph.setFontSize(12);
-        return invalidGlyph;
+    private static class Bip39WordlistProvider implements WordlistProvider {
+        @Override
+        public List<String> getWordlist() {
+            return Bip39MnemonicCode.INSTANCE.getWordList();
+        }
+
+        public boolean isValid(String word) {
+            return getWordlist().contains(word);
+        }
+
+        @Override
+        public boolean supportsPossibleLastWords() {
+            return true;
+        }
+
+        @Override
+        public List<String> getPossibleLastWords(List<String> previousWords) throws MnemonicException.MnemonicLengthException, MnemonicException.MnemonicWordException {
+            return Bip39MnemonicCode.INSTANCE.getPossibleLastWords(previousWords);
+        }
+    }
+
+    private static class Slip39WordlistProvider implements WordlistProvider {
+        @Override
+        public List<String> getWordlist() {
+            return Slip39MnemonicCode.INSTANCE.getWordList();
+        }
+
+        @Override
+        public boolean isValid(String word) {
+            return getWordlist().contains(word);
+        }
+
+        @Override
+        public boolean supportsPossibleLastWords() {
+            return false;
+        }
+
+        @Override
+        public List<String> getPossibleLastWords(List<String> previousWords) {
+            throw new UnsupportedOperationException();
+        }
     }
 }

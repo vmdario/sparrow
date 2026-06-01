@@ -13,7 +13,9 @@ public class GlyphUtils {
             return getMixGlyph();
         } else if(payment.getType().equals(Payment.Type.FAKE_MIX)) {
             return getFakeMixGlyph();
-        } else if(walletTx.isConsolidationSend(payment)) {
+        } else if(payment.getType().equals(Payment.Type.ANCHOR)) {
+            return getAnchorGlyph();
+        } else if(walletTx.isConsolidation(payment)) {
             return getConsolidationGlyph();
         } else if(walletTx.isPremixSend(payment)) {
             return getPremixGlyph();
@@ -183,6 +185,13 @@ public class GlyphUtils {
         return successGlyph;
     }
 
+    public static Glyph getInvalidGlyph() {
+        Glyph invalidGlyph = new Glyph(FontAwesome5.FONT_NAME, FontAwesome5.Glyph.EXCLAMATION_CIRCLE);
+        invalidGlyph.getStyleClass().add("failure");
+        invalidGlyph.setFontSize(12);
+        return invalidGlyph;
+    }
+
     public static Glyph getWarningGlyph() {
         Glyph warningGlyph = new Glyph(FontAwesome5.FONT_NAME, FontAwesome5.Glyph.EXCLAMATION_TRIANGLE);
         warningGlyph.getStyleClass().add("warn-icon");
@@ -204,10 +213,24 @@ public class GlyphUtils {
         return busyGlyph;
     }
 
+    public static Glyph getUpArrowGlyph() {
+        Glyph upGlyph = new Glyph(FontAwesome5.FONT_NAME, FontAwesome5.Glyph.ARROW_UP);
+        upGlyph.getStyleClass().add("arrow-up");
+        upGlyph.setFontSize(12);
+        return upGlyph;
+    }
+
     public static Glyph getDownArrowGlyph() {
         Glyph downGlyph = new Glyph(FontAwesome5.FONT_NAME, FontAwesome5.Glyph.ARROW_DOWN);
         downGlyph.getStyleClass().add("arrow-down");
         downGlyph.setFontSize(12);
         return downGlyph;
+    }
+
+    public static Glyph getAnchorGlyph() {
+        Glyph anchorGlyph = new Glyph(FontAwesome5.FONT_NAME, FontAwesome5.Glyph.ANCHOR);
+        anchorGlyph.getStyleClass().add("anchor-icon");
+        anchorGlyph.setFontSize(12);
+        return anchorGlyph;
     }
 }

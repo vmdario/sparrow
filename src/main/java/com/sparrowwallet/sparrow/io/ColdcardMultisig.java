@@ -32,7 +32,7 @@ public class ColdcardMultisig implements WalletImport, KeystoreFileImport, Walle
     }
 
     @Override
-    public Keystore getKeystore(ScriptType scriptType, InputStream inputStream, String password) throws ImportException {
+    public Keystore getKeystore(PolicyType policyType, ScriptType scriptType, InputStream inputStream, String password) throws ImportException {
         try {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             inputStream.transferTo(baos);
@@ -41,9 +41,9 @@ public class ColdcardMultisig implements WalletImport, KeystoreFileImport, Walle
 
             Keystore keystore;
             try {
-                keystore = getKeystoreMultisig(scriptType, firstClone, password);
+                keystore = getKeystoreMultisig(policyType, scriptType, firstClone, password);
             } catch(Exception e) {
-                keystore = getKeystoreSinglesig(scriptType, secondClone, password);
+                keystore = getKeystoreSinglesig(policyType, scriptType, secondClone, password);
             }
 
             return keystore;
@@ -52,18 +52,18 @@ public class ColdcardMultisig implements WalletImport, KeystoreFileImport, Walle
         }
     }
 
-    private Keystore getKeystoreSinglesig(ScriptType scriptType, InputStream inputStream, String password) throws ImportException {
+    private Keystore getKeystoreSinglesig(PolicyType policyType, ScriptType scriptType, InputStream inputStream, String password) throws ImportException {
         ColdcardSinglesig coldcardSinglesig = new ColdcardSinglesig();
-        return coldcardSinglesig.getKeystore(scriptType, inputStream, password);
+        return coldcardSinglesig.getKeystore(policyType, scriptType, inputStream, password);
     }
 
-    public Keystore getKeystoreMultisig(ScriptType scriptType, InputStream inputStream, String password) throws ImportException {
+    public Keystore getKeystoreMultisig(PolicyType policyType, ScriptType scriptType, InputStream inputStream, String password) throws ImportException {
         InputStreamReader reader = new InputStreamReader(inputStream, StandardCharsets.UTF_8);
         ColdcardKeystore cck = JsonPersistence.getGson().fromJson(reader, ColdcardKeystore.class);
 
         Keystore keystore = new Keystore("Coldcard");
         keystore.setSource(KeystoreSource.HW_AIRGAPPED);
-        keystore.setWalletModel(WalletModel.COLDCARD);
+        keystore.setWalletModel(getWalletModel());
 
         try {
             if(cck.xpub != null && cck.path != null) {
@@ -71,16 +71,16 @@ public class ColdcardMultisig implements WalletImport, KeystoreFileImport, Walle
                 if(header.getDefaultScriptType() != scriptType) {
                     throw new ImportException("This wallet's script type (" + scriptType + ") does not match the " + getName() + " script type (" + header.getDefaultScriptType() + ")");
                 }
-                keystore.setKeyDerivation(new KeyDerivation(cck.xfp, cck.path));
+                keystore.setKeyDerivation(new KeyDerivation(cck.xfp, cck.path, true));
                 keystore.setExtendedPublicKey(ExtendedKey.fromDescriptor(cck.xpub));
             } else if(scriptType.equals(ScriptType.P2SH)) {
-                keystore.setKeyDerivation(new KeyDerivation(cck.xfp, cck.p2sh_deriv));
+                keystore.setKeyDerivation(new KeyDerivation(cck.xfp, cck.p2sh_deriv, true));
                 keystore.setExtendedPublicKey(ExtendedKey.fromDescriptor(cck.p2sh));
             } else if(scriptType.equals(ScriptType.P2SH_P2WSH)) {
-                keystore.setKeyDerivation(new KeyDerivation(cck.xfp, cck.p2wsh_p2sh_deriv != null ? cck.p2wsh_p2sh_deriv : cck.p2sh_p2wsh_deriv));
+                keystore.setKeyDerivation(new KeyDerivation(cck.xfp, cck.p2wsh_p2sh_deriv != null ? cck.p2wsh_p2sh_deriv : cck.p2sh_p2wsh_deriv, true));
                 keystore.setExtendedPublicKey(ExtendedKey.fromDescriptor(cck.p2wsh_p2sh != null ? cck.p2wsh_p2sh : cck.p2sh_p2wsh));
             } else if(scriptType.equals(ScriptType.P2WSH)) {
-                keystore.setKeyDerivation(new KeyDerivation(cck.xfp, cck.p2wsh_deriv));
+                keystore.setKeyDerivation(new KeyDerivation(cck.xfp, cck.p2wsh_deriv, true));
                 keystore.setExtendedPublicKey(ExtendedKey.fromDescriptor(cck.p2wsh));
             } else {
                 throw new ImportException("Correct derivation not found for script type: " + scriptType);
@@ -119,7 +119,7 @@ public class ColdcardMultisig implements WalletImport, KeystoreFileImport, Walle
     @Override
     public Wallet importWallet(InputStream inputStream, String password) throws ImportException {
         Wallet wallet = new Wallet();
-        wallet.setPolicyType(PolicyType.MULTI);
+        wallet.setPolicyType(PolicyType.MULTI_HD);
 
         int threshold = 2;
         ScriptType scriptType = ScriptType.P2SH;
@@ -157,7 +157,7 @@ public class ColdcardMultisig implements WalletImport, KeystoreFileImport, Walle
                                 Keystore keystore = new Keystore("Coldcard");
                                 keystore.setSource(KeystoreSource.HW_AIRGAPPED);
                                 keystore.setWalletModel(WalletModel.COLDCARD);
-                                keystore.setKeyDerivation(new KeyDerivation(key, derivation));
+                                keystore.setKeyDerivation(new KeyDerivation(key, derivation, true));
                                 keystore.setExtendedPublicKey(ExtendedKey.fromDescriptor(value));
                                 wallet.makeLabelsUnique(keystore);
                                 wallet.getKeystores().add(keystore);
@@ -167,7 +167,7 @@ public class ColdcardMultisig implements WalletImport, KeystoreFileImport, Walle
             }
 
 
-            Policy policy = Policy.getPolicy(PolicyType.MULTI, scriptType, wallet.getKeystores(), threshold);
+            Policy policy = Policy.getPolicy(PolicyType.MULTI_HD, scriptType, wallet.getKeystores(), threshold);
             wallet.setDefaultPolicy(policy);
             wallet.setScriptType(scriptType);
 
@@ -194,7 +194,7 @@ public class ColdcardMultisig implements WalletImport, KeystoreFileImport, Walle
             throw new ExportException("Cannot export an incomplete wallet");
         }
 
-        if(!wallet.getPolicyType().equals(PolicyType.MULTI)) {
+        if(!wallet.getPolicyType().equals(PolicyType.MULTI_HD)) {
             throw new ExportException(getName() + " import requires a multisig wallet");
         }
 

@@ -1,6 +1,7 @@
 package com.sparrowwallet.sparrow.control;
 
 import com.sparrowwallet.drongo.BitcoinUnit;
+import com.sparrowwallet.drongo.OsType;
 import com.sparrowwallet.drongo.protocol.Transaction;
 import com.sparrowwallet.drongo.wallet.BlockTransactionHash;
 import com.sparrowwallet.sparrow.UnitFormat;
@@ -16,7 +17,6 @@ import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.Region;
 import javafx.util.Duration;
-import org.controlsfx.tools.Platform;
 
 import java.text.DecimalFormat;
 
@@ -32,7 +32,7 @@ class CoinCell extends TreeTableCell<Entry, Number> implements ConfirmationsList
         tooltip.setShowDelay(Duration.millis(500));
         contextMenu = new CoinContextMenu();
         getStyleClass().add("coin-cell");
-        if(Platform.getCurrent() == Platform.OSX) {
+        if(OsType.getCurrent() == OsType.MACOS) {
             getStyleClass().add("number-field");
         }
     }
@@ -58,16 +58,22 @@ class CoinCell extends TreeTableCell<Entry, Number> implements ConfirmationsList
             DecimalFormat decimalFormat = (amount.longValue() == 0L ? format.getBtcFormat() : format.getTableBtcFormat());
             final String btcValue = decimalFormat.format(amount.doubleValue() / Transaction.SATOSHIS_PER_BITCOIN);
 
-            if(unit.equals(BitcoinUnit.BTC)) {
-                tooltip.setValue(satsValue + " " + BitcoinUnit.SATOSHIS.getLabel());
-                setText(btcValue);
+            if(Config.get().isHideAmounts()) {
+                setText(CoinLabel.HIDDEN_AMOUNT_TEXT);
+                setTooltip(null);
+                setContextMenu(null);
             } else {
-                tooltip.setValue(btcValue + " " + BitcoinUnit.BTC.getLabel());
-                setText(satsValue);
+                if(unit.equals(BitcoinUnit.BTC)) {
+                    tooltip.setValue(satsValue + " " + BitcoinUnit.SATOSHIS.getLabel());
+                    setText(btcValue);
+                } else {
+                    tooltip.setValue(btcValue + " " + BitcoinUnit.BTC.getLabel());
+                    setText(satsValue);
+                }
+                setTooltip(tooltip);
+                contextMenu.updateAmount(amount);
+                setContextMenu(contextMenu);
             }
-            setTooltip(tooltip);
-            contextMenu.updateAmount(amount);
-            setContextMenu(contextMenu);
 
             if(entry instanceof TransactionEntry transactionEntry) {
                 tooltip.showConfirmations(transactionEntry.confirmationsProperty(), transactionEntry.isCoinbase());
@@ -86,14 +92,16 @@ class CoinCell extends TreeTableCell<Entry, Number> implements ConfirmationsList
                 }
             } else if(entry instanceof UtxoEntry) {
                 setGraphic(null);
-            } else if(entry instanceof HashIndexEntry) {
+            } else if(entry instanceof HashIndexEntry hashIndexEntry) {
+                tooltip.hideConfirmations();
+
                 Region node = new Region();
                 node.setPrefWidth(10);
                 setGraphic(node);
                 setContentDisplay(ContentDisplay.RIGHT);
 
-                if(((HashIndexEntry) entry).getType() == HashIndexEntry.Type.INPUT) {
-                    satsValue = "-" + satsValue;
+                if(hashIndexEntry.getType() == HashIndexEntry.Type.INPUT && !Config.get().isHideAmounts()) {
+                    setText("-" + getText());
                 }
             } else {
                 setGraphic(null);
@@ -144,6 +152,14 @@ class CoinCell extends TreeTableCell<Entry, Number> implements ConfirmationsList
                 confirmationsProperty.unbind();
                 confirmationsProperty.set(confirmations);
             }
+
+            setTooltipText();
+        }
+
+        public void hideConfirmations() {
+            showConfirmations = false;
+            isCoinbase = false;
+            confirmationsProperty.unbind();
 
             setTooltipText();
         }

@@ -1,15 +1,21 @@
 package com.sparrowwallet.sparrow.net;
 
+import com.fasterxml.jackson.annotation.JsonAnyGetter;
+import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.sparrowwallet.sparrow.AppServices;
+import com.sparrowwallet.sparrow.SparrowWallet;
 import com.sparrowwallet.sparrow.event.ExchangeRatesUpdatedEvent;
-import com.sparrowwallet.sparrow.net.http.client.HttpResponseException;
+import com.sparrowwallet.tern.http.client.HttpResponseException;
 import javafx.concurrent.ScheduledService;
 import javafx.concurrent.Service;
 import javafx.concurrent.Task;
 import org.apache.commons.lang3.time.DateUtils;
+import org.girod.javafx.svgimage.SVGImage;
+import org.girod.javafx.svgimage.SVGLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.net.URL;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.time.Instant;
@@ -19,7 +25,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 public enum ExchangeSource {
-    NONE("None") {
+    NONE("None", null) {
         @Override
         public List<Currency> getSupportedCurrencies() {
             return Collections.emptyList();
@@ -35,7 +41,7 @@ public enum ExchangeSource {
             return Collections.emptyMap();
         }
     },
-    COINBASE("Coinbase") {
+    COINBASE("Coinbase", "No historical rates") {
         @Override
         public List<Currency> getSupportedCurrencies() {
             return getRates().data.rates.keySet().stream().filter(code -> isValidISO4217Code(code.toUpperCase(Locale.ROOT)))
@@ -98,7 +104,7 @@ public enum ExchangeSource {
 
                 HttpClientService httpClientService = AppServices.getHttpClientService();
                 try {
-                    Number[][] coinbaseData = httpClientService.requestJson(url, Number[][].class, Map.of("User-Agent", "Mozilla/4.0 (compatible; MSIE 9.0; Windows NT 6.1)", "Accept", "*/*"));
+                    Number[][] coinbaseData = httpClientService.requestJson(url, Number[][].class, HTTP_HEADERS);
                     for(Number[] price : coinbaseData) {
                         Date date = new Date(price[0].longValue() * 1000);
                         historicalRates.put(DateUtils.truncate(date, Calendar.DAY_OF_MONTH), price[4].doubleValue());
@@ -119,7 +125,7 @@ public enum ExchangeSource {
             return historicalRates;
         }
     },
-    COINGECKO("Coingecko") {
+    COINGECKO("Coingecko", "Historical rates for the last 365 days") {
         @Override
         public List<Currency> getSupportedCurrencies() {
             return getRates().rates.entrySet().stream().filter(rate -> "fiat".equals(rate.getValue().type) && isValidISO4217Code(rate.getKey().toUpperCase(Locale.ROOT)))
@@ -146,7 +152,7 @@ public enum ExchangeSource {
 
             HttpClientService httpClientService = AppServices.getHttpClientService();
             try {
-                return httpClientService.requestJson(url, CoinGeckoRates.class, null);
+                return httpClientService.requestJson(url, CoinGeckoRates.class, HTTP_HEADERS);
             } catch(Exception e) {
                 if(log.isDebugEnabled()) {
                     log.warn("Error retrieving currency rates", e);
@@ -162,6 +168,11 @@ public enum ExchangeSource {
             long startDate = start.getTime() / 1000;
             long endDate = end.getTime() / 1000;
 
+            Calendar cal = Calendar.getInstance();
+            cal.add(Calendar.YEAR, -1);
+            startDate = Math.max(cal.getTimeInMillis() / 1000, startDate);
+            endDate = Math.max(cal.getTimeInMillis() / 1000, endDate);
+
             String url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=" + currency.getCurrencyCode() + "&from=" + startDate + "&to=" + endDate;
 
             if(log.isInfoEnabled()) {
@@ -171,7 +182,7 @@ public enum ExchangeSource {
             Map<Date, Double> historicalRates = new TreeMap<>();
             HttpClientService httpClientService = AppServices.getHttpClientService();
             try {
-                CoinGeckoHistoricalRates coinGeckoHistoricalRates = httpClientService.requestJson(url, CoinGeckoHistoricalRates.class, null);
+                CoinGeckoHistoricalRates coinGeckoHistoricalRates = httpClientService.requestJson(url, CoinGeckoHistoricalRates.class, HTTP_HEADERS);
                 for(List<Number> historicalRate : coinGeckoHistoricalRates.prices) {
                     Date date = new Date(historicalRate.get(0).longValue());
                     historicalRates.put(DateUtils.truncate(date, Calendar.DAY_OF_MONTH), historicalRate.get(1).doubleValue());
@@ -186,14 +197,86 @@ public enum ExchangeSource {
 
             return historicalRates;
         }
+    },
+    MEMPOOL_SPACE("mempool.space", "Historical rates from Apr 2023") {
+        @Override
+        public List<Currency> getSupportedCurrencies() {
+            return getRates().rates.entrySet().stream().filter(price -> isValidISO4217Code(price.getKey().toUpperCase(Locale.ROOT)))
+                    .map(rate -> Currency.getInstance(rate.getKey().toUpperCase(Locale.ROOT))).collect(Collectors.toList());
+        }
+
+        @Override
+        public Double getExchangeRate(Currency currency) {
+            String currencyCode = currency.getCurrencyCode();
+            OptionalDouble optRate = getRates().rates.entrySet().stream().filter(price -> currencyCode.equalsIgnoreCase(price.getKey())).mapToDouble(Map.Entry::getValue).findFirst();
+            if(optRate.isPresent()) {
+                return optRate.getAsDouble();
+            }
+
+            return null;
+        }
+
+        private MempoolSpaceRates getRates() {
+            String url = AppServices.isUsingProxy() ? "http://mempoolhqx4isw62xs7abwphsq7ldayuidyx2v2oethdhhj6mlo2r6ad.onion/api/v1/prices" : "https://mempool.space/api/v1/prices";
+
+            if(log.isInfoEnabled()) {
+                log.info("Requesting exchange rates from " + url);
+            }
+
+            HttpClientService httpClientService = AppServices.getHttpClientService();
+            try {
+                return httpClientService.requestJson(url, MempoolSpaceRates.class, null);
+            } catch(Exception e) {
+                if(log.isDebugEnabled()) {
+                    log.warn("Error retrieving currency rates", e);
+                } else {
+                    log.warn("Error retrieving currency rates (" + e.getMessage() + ")");
+                }
+                return new MempoolSpaceRates();
+            }
+        }
+
+        @Override
+        public Map<Date, Double> getHistoricalExchangeRates(Currency currency, Date start, Date end) {
+            String url = AppServices.isUsingProxy() ? "http://mempoolhqx4isw62xs7abwphsq7ldayuidyx2v2oethdhhj6mlo2r6ad.onion/api/v1/historical-price?currency=" + currency.getCurrencyCode() :
+                    "https://mempool.space/api/v1/historical-price?currency=" + currency.getCurrencyCode();
+
+            if(log.isInfoEnabled()) {
+                log.info("Requesting historical exchange rates from " + url);
+            }
+
+            Map<Date, Double> historicalRates = new TreeMap<>();
+            HttpClientService httpClientService = AppServices.getHttpClientService();
+            try {
+                MempoolSpaceHistoricalRates mempoolSpaceHistoricalRates = httpClientService.requestJson(url, MempoolSpaceHistoricalRates.class, null);
+                Collections.reverse(mempoolSpaceHistoricalRates.prices); //Use "closing" rates
+                for(MempoolSpaceRates historicalRate : mempoolSpaceHistoricalRates.prices) {
+                    Date date = new Date(historicalRate.time * 1000);
+                    if(date.after(start) && date.before(end) && historicalRate.rates.containsKey(currency.getCurrencyCode())) {
+                        historicalRates.put(DateUtils.truncate(date, Calendar.DAY_OF_MONTH), historicalRate.rates.get(currency.getCurrencyCode()));
+                    }
+                }
+            } catch(Exception e) {
+                if(log.isDebugEnabled()) {
+                    log.warn("Error retrieving historical currency rates", e);
+                } else {
+                    log.warn("Error retrieving historical currency rates (" + e.getMessage() + ")");
+                }
+            }
+
+            return historicalRates;
+        }
     };
 
     private static final Logger log = LoggerFactory.getLogger(ExchangeSource.class);
+    private static final Map<String, String> HTTP_HEADERS = Map.of("User-Agent", "Mozilla/4.0 (compatible; MSIE 9.0; Windows NT 6.1)", "Accept", "*/*");
 
     private final String name;
+    private final String description;
 
-    ExchangeSource(String name) {
+    ExchangeSource(String name, String description) {
         this.name = name;
+        this.description = description;
     }
 
     public abstract List<Currency> getSupportedCurrencies();
@@ -211,9 +294,30 @@ public enum ExchangeSource {
         }
     }
 
+    public String getName() {
+        return name;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
     @Override
     public String toString() {
         return name;
+    }
+
+    public SVGImage getSVGImage() {
+        try {
+            URL url = AppServices.class.getResource("/image/exchangesource/" + name.toLowerCase(Locale.ROOT) + "-icon.svg");
+            if(url != null) {
+                return SVGLoader.load(url);
+            }
+        } catch(Exception e) {
+            log.error("Could not load exchange source image for " + name);
+        }
+
+        return null;
     }
 
     public static class CurrenciesService extends Service<List<Currency>> {
@@ -278,5 +382,25 @@ public enum ExchangeSource {
 
     private static class CoinGeckoHistoricalRates {
         public List<List<Number>> prices = new ArrayList<>();
+    }
+
+    private static class MempoolSpaceRates {
+        public long time;
+        public final Map<String, Double> rates = new LinkedHashMap<>();
+
+        // Capture all other fields that Jackson do not match other members
+        @JsonAnyGetter
+        public Map<String, Double> getPrices() {
+            return rates;
+        }
+
+        @JsonAnySetter
+        public void setPrice(String name, Double value) {
+            rates.put(name, value);
+        }
+    }
+
+    private static class MempoolSpaceHistoricalRates {
+        public List<MempoolSpaceRates> prices = new ArrayList<>();
     }
 }

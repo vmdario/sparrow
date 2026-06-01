@@ -1,6 +1,7 @@
 package com.sparrowwallet.sparrow;
 
 import com.sparrowwallet.drongo.Network;
+import com.sparrowwallet.drongo.OsType;
 import com.sparrowwallet.drongo.wallet.Wallet;
 import com.sparrowwallet.sparrow.control.WalletIcon;
 import com.sparrowwallet.sparrow.glyphfont.FontAwesome5;
@@ -9,13 +10,12 @@ import com.sparrowwallet.sparrow.io.Config;
 import com.sparrowwallet.sparrow.io.Storage;
 import com.sparrowwallet.sparrow.net.PublicElectrumServer;
 import com.sparrowwallet.sparrow.net.ServerType;
-import com.sparrowwallet.sparrow.preferences.PreferenceGroup;
-import com.sparrowwallet.sparrow.preferences.PreferencesDialog;
+import com.sparrowwallet.sparrow.settings.SettingsGroup;
+import com.sparrowwallet.sparrow.settings.SettingsDialog;
 import javafx.application.Application;
 import javafx.scene.text.Font;
 import javafx.stage.Stage;
 import org.controlsfx.glyphfont.GlyphFontRegistry;
-import org.controlsfx.tools.Platform;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
@@ -42,10 +42,7 @@ public class SparrowDesktop extends Application {
     public void start(Stage stage) throws Exception {
         this.mainStage = stage;
 
-        GlyphFontRegistry.register(new FontAwesome5());
-        GlyphFontRegistry.register(new FontAwesome5Brands());
-        Font.loadFont(AppServices.class.getResourceAsStream("/font/RobotoMono-Regular.ttf"), 13);
-        Font.loadFont(AppServices.class.getResourceAsStream("/font/RobotoMono-Italic.ttf"), 11);
+        initializeFonts();
         URL.setURLStreamHandlerFactory(protocol -> WalletIcon.PROTOCOL.equals(protocol) ? new WalletIcon.WalletIconStreamHandler() : null);
 
         AppServices.initialize(this);
@@ -60,8 +57,8 @@ public class SparrowDesktop extends Application {
                 Config.get().setMode(mode);
 
                 if(mode.equals(Mode.ONLINE)) {
-                    PreferencesDialog preferencesDialog = new PreferencesDialog(PreferenceGroup.SERVER, true);
-                    Optional<Boolean> optNewWallet = preferencesDialog.showAndWait();
+                    SettingsDialog settingsDialog = new SettingsDialog(SettingsGroup.SERVER, true);
+                    Optional<Boolean> optNewWallet = settingsDialog.showAndWait();
                     createNewWallet = optNewWallet.isPresent() && optNewWallet.get();
                 } else if(Network.get() == Network.MAINNET) {
                     Config.get().setServerType(ServerType.PUBLIC_ELECTRUM_SERVER);
@@ -75,10 +72,6 @@ public class SparrowDesktop extends Application {
             Config.get().setServerType(ServerType.ELECTRUM_SERVER);
         }
 
-        if(Config.get().getHdCapture() == null && Platform.getCurrent() == Platform.OSX) {
-            Config.get().setHdCapture(Boolean.TRUE);
-        }
-
         System.setProperty(Wallet.ALLOW_DERIVATIONS_MATCHING_OTHER_SCRIPT_TYPES_PROPERTY, Boolean.toString(!Config.get().isValidateDerivationPaths()));
         System.setProperty(Wallet.ALLOW_DERIVATIONS_MATCHING_OTHER_NETWORKS_PROPERTY, Boolean.toString(!Config.get().isValidateDerivationPaths()));
 
@@ -89,28 +82,42 @@ public class SparrowDesktop extends Application {
 
         AppController appController = AppServices.newAppWindow(stage);
 
-        if(createNewWallet) {
-            appController.newWallet(null);
-        }
+        final boolean showNewWallet = createNewWallet;
+        //Delay opening new dialogs on Wayland
+        AppServices.runAfterDelay(AppServices.isOnWayland() ? 1000 : 0, () -> {
+            if(showNewWallet) {
+                appController.newWallet(null);
+            }
 
-        List<File> recentWalletFiles = Config.get().getRecentWalletFiles();
-        if(recentWalletFiles != null) {
-            //Preserve wallet order as far as possible. Unencrypted wallets will still be opened first.
-            List<File> encryptedWalletFiles = recentWalletFiles.stream().filter(Storage::isEncrypted).collect(Collectors.toList());
-            List<File> sortedWalletFiles = new ArrayList<>(recentWalletFiles);
-            sortedWalletFiles.removeAll(encryptedWalletFiles);
-            sortedWalletFiles.addAll(encryptedWalletFiles);
+            List<File> recentWalletFiles = Config.get().getRecentWalletFiles();
+            if(recentWalletFiles != null) {
+                //Preserve wallet order as far as possible. Unencrypted wallets will still be opened first.
+                List<File> encryptedWalletFiles = recentWalletFiles.stream().filter(Storage::isEncrypted).collect(Collectors.toList());
+                List<File> sortedWalletFiles = new ArrayList<>(recentWalletFiles);
+                sortedWalletFiles.removeAll(encryptedWalletFiles);
+                sortedWalletFiles.addAll(encryptedWalletFiles);
 
-            for(File walletFile : sortedWalletFiles) {
-                if(walletFile.exists()) {
-                    appController.openWalletFile(walletFile, false);
+                for(File walletFile : sortedWalletFiles) {
+                    if(walletFile.exists()) {
+                        appController.openWalletFile(walletFile, false);
+                    }
                 }
             }
+
+            AppServices.openFileUriArgumentsAfterWalletLoading(stage);
+
+            AppServices.get().start();
+        });
+    }
+
+    private void initializeFonts() {
+        GlyphFontRegistry.register(new FontAwesome5());
+        GlyphFontRegistry.register(new FontAwesome5Brands());
+        Font.loadFont(AppServices.class.getResourceAsStream("/font/FragmentMono-Regular.ttf"), 13);
+        Font.loadFont(AppServices.class.getResourceAsStream("/font/FragmentMono-Italic.ttf"), 11);
+        if(OsType.getCurrent() == OsType.MACOS) {
+            Font.loadFont(AppServices.class.getResourceAsStream("/font/LiberationSans-Regular.ttf"), 13);
         }
-
-        AppServices.openFileUriArgumentsAfterWalletLoading(stage);
-
-        AppServices.get().start();
     }
 
     @Override
